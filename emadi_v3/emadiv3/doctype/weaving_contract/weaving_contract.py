@@ -8,14 +8,159 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt
 
+from emadi_v3.emadi.events.weaving_yarn_balance import (
+	get_contract_tcs,
+	get_tcs_lines,
+	validate_contract_yarn_balance,
+)
+
 
 class WeavingContract(Document):
+	def validate(self):
+		sync_gsm(self)
+		# Submitted contracts are re-saved by Open / Close (custom_status) -
+		# leave their quantities alone then.
+		if self.docstatus == 1 and getattr(self, "_action", None) != "submit":
+			return
+		sync_yarn_driven_fields(self)
+		# Draft save: warn only. Submit: hard stop (fresh DB re-read).
+		validate_contract_yarn_balance(self, hard=self.docstatus == 1)
+
 	def on_submit(self):
 		allocate_sales_order_balance(self)
 		create_beam_items(self)
 
 	def on_cancel(self):
 		release_sales_order_balance(self)
+
+	@frappe.whitelist()
+	def recalc_yarn_from_order_qty(self):
+		"""2026-09-28 (feature v3) - "yarn qty will be recalculated upon
+		changing Order Qty. yarn qty = yarn reqd per lbs (from TCS) *
+		order qty" (your words). Forward direction of the same relationship
+		sync_yarn_driven_fields already runs backwards (yarn lbs -> Order
+		Qty): only touches BOM Items rows whose (For, Yarn) is actually on
+		this Finish Item's Towel Costing Sheet, same restriction used
+		everywhere else this balance logic runs. Called from the client on
+		the Order Qty field's change event - only reachable there when the
+		field isn't read-only, i.e. this contract isn't already being
+		driven the other way by yarn balances (see weaving_contract.js)."""
+		if not (self.sales_order and self.construction):
+			frappe.throw(_("Set Sales Order and Finish Item first."))
+
+		tcs = get_contract_tcs(self)
+		lines = get_tcs_lines(tcs, self.construction)
+		if not lines:
+			frappe.throw(
+				_("No yarn lines found on the Towel Costing Sheet for {0}.").format(self.construction)
+			)
+
+		for row in self.get("bom_items") or []:
+			k = (self.construction, (row.get("for") or "").strip(), row.yarn_count or "")
+			if k in lines:
+				row.yarn_qty = lines[k]["per_pc"] * flt(self.fabric_qty)
+
+		sync_yarn_driven_fields(self)
+
+
+def get_gsm_from_tcs(towel_costing_sheet, item_code):
+	"""GSM lives on the Towel Costing Sheet's Finish Item table - one row
+	per Article (finish item), matched here the same way Sales Order Item's
+	GSM is matched (garments_app_v3.events.sales_order_dyeing_calc)."""
+	if not (towel_costing_sheet and item_code):
+		return 0
+	tcs = frappe.get_cached_doc("Towel Costing Sheet", towel_costing_sheet)
+	for row in tcs.get("finish_item_towel_costing") or []:
+		if row.article == item_code:
+			return flt(row.gsm)
+	return 0
+
+
+def find_tcs_by_finish_item(item_code):
+	"""2026-09-28 - "the gsm should be fetched from Towel Cost Sheet of
+	Finish Item" (your words): the Sales Order-linked TCS lookup
+	(get_contract_tcs) came back empty on your test contract, most likely
+	because it wasn't created via Get Items From Sales Order (or the
+	Sales Order Item's Towel Costing Sheet was blank), leaving no TCS to
+	find GSM on. This is a direct fallback that doesn't need a Sales
+	Order at all: any Towel Costing Sheet whose Finish Item table lists
+	this Finish Item as its Article, most recently modified one first."""
+	if not item_code:
+		return None
+	rows = frappe.db.sql(
+		"""
+		select fi.parent as tcs
+		from `tabFinish Item Towel Costing` fi
+		inner join `tabTowel Costing Sheet` tcs on tcs.name = fi.parent
+		where fi.article = %s
+		order by tcs.modified desc
+		limit 1
+		""",
+		(item_code,),
+	)
+	return rows[0][0] if rows else None
+
+
+def sync_gsm(doc):
+	"""2026-09-28 (feature v3) - GSM on Weaving Contract. Prefers the TCS
+	actually behind this contract's Sales Order (get_contract_tcs, most
+	accurate to this specific order); falls back to any TCS listing this
+	Finish Item (find_tcs_by_finish_item above) so GSM still shows on a
+	contract with no Sales Order / Sales Order Item TCS set. Authoritative
+	recompute on every save; the client-side get_contract_gsm below is
+	just a live preview on Finish Item / Sales Order change."""
+	construction = doc.get("construction")
+	tcs = get_contract_tcs(doc) or find_tcs_by_finish_item(construction)
+	doc.gsm = get_gsm_from_tcs(tcs, construction)
+
+
+@frappe.whitelist()
+def get_contract_gsm(sales_order=None, sales_order_item=None, construction=None):
+	"""Live client-side fetch for the Finish Item / Sales Order change
+	handlers in weaving_contract.js - see sync_gsm above for the
+	authoritative, save-time version of this same lookup."""
+	fake_doc = frappe._dict(
+		sales_order=sales_order, sales_order_item=sales_order_item, construction=construction
+	)
+	tcs = get_contract_tcs(fake_doc) or find_tcs_by_finish_item(construction)
+	return get_gsm_from_tcs(tcs, construction)
+
+
+def sync_yarn_driven_fields(doc):
+	"""2026-09-26 - contracts are split BY YARN LBS. Yarn Qty is what the
+	user edits; everything else follows it:
+	  Required Bags = Yarn Qty / Lbs per Bag            (per row)
+	  Total Yarn / Total Consumption / Total Bags        (sums)
+	  Fabric Qty    = total Yarn Qty / TCS lbs per piece (all yarns of
+	                  this item) - only when linked to a Sales Order.
+	Fabric Qty is what allocate_sales_order_balance draws down per piece
+	on submit; because every yarn is capped at its own lbs balance, the
+	pieces derived this way can never add up to more than the Sales Order
+	qty across contracts."""
+	total_yarn = 0.0
+	total_bags = 0.0
+	for row in doc.get("bom_items") or []:
+		if flt(row.lbs_per_bag):
+			row.required_bags = flt(row.yarn_qty) / flt(row.lbs_per_bag)
+		total_yarn += flt(row.yarn_qty)
+		total_bags += flt(row.required_bags)
+
+	doc.total_yarn = total_yarn
+	doc.total_consumption = total_yarn
+	doc.total_bags = total_bags
+
+	if doc.get("sales_order") and doc.get("construction"):
+		tcs = get_contract_tcs(doc)
+		lines = get_tcs_lines(tcs, doc.construction)
+		per_piece_total = sum(line["per_pc"] for line in lines.values())
+		if per_piece_total:
+			# only yarns that are on the TCS count towards pieces
+			tcs_lbs = sum(
+				flt(row.yarn_qty)
+				for row in doc.get("bom_items") or []
+				if (doc.construction, (row.get("for") or "").strip(), row.yarn_count or "") in lines
+			)
+			doc.fabric_qty = tcs_lbs / per_piece_total
 
 
 def allocate_sales_order_balance(doc):
@@ -61,7 +206,9 @@ def allocate_sales_order_balance(doc):
 		allocations.append({"sales_order_item": row.name, "qty": take})
 		remaining -= take
 
-	if remaining > 0.0001:
+	# Fabric Qty is derived from yarn lbs (sync_yarn_driven_fields), so a
+	# few thousandths of a piece of float rounding must not block submit.
+	if remaining > 0.01:
 		frappe.throw(
 			_(
 				"Only {0} of {1} is actually available against Sales Order {2} for Item {3} right now "

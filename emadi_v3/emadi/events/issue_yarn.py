@@ -58,11 +58,21 @@ def issue_yarn(weaving_contract, rows):
 	se.stock_entry_type = "Material Transfer"
 	se.purpose = "Material Transfer"
 	se.company = frappe.defaults.get_global_default("company")
-	# New emadi_v3-owned Stock Entry custom field (custom/stock_entry.json) +
-	# the existing custom_sales_order field mjfsd_v3 already added - "same
-	# sales order and weaving contract reference will be mentioned in
-	# stock entry" (your words).
-	se.custom_weaving_contract = wc.name
+	# 2026-09-28 fix - this was setting `custom_weaving_contract`, a field
+	# that doesn't exist anywhere on Stock Entry (silently dropped on
+	# save - Frappe lets you set an attribute that isn't a real field,
+	# it just never gets persisted). Stock Entry already has its own
+	# plain `weaving_contract` field (no "custom_" prefix, from
+	# emadi_v3's own custom/stock_entry.json) - that's the one to set.
+	# Same bug, already caught and fixed in mjfsd_v3's copy of this file
+	# a while back; this is the copy actually wired to the Issue Yarn
+	# button (see weaving_contract.js) and had fallen out of sync.
+	# "same sales order and weaving contract reference will be mentioned
+	# in stock entry" (your words) - now also fetches Weaver, added
+	# 2026-09-28: "create a field of Weaver (Linked to supplier, fetch
+	# from weaving contract) ... Weaving Contract Ref".
+	se.weaving_contract = wc.name
+	se.weaver = wc.weaver
 	if wc.sales_order:
 		se.custom_sales_order = wc.sales_order
 

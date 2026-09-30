@@ -113,6 +113,11 @@ frappe.ui.form.on('Weaving Contract', {
 			}
 		}
 
+		// Fabric Qty is derived from the yarn lbs when linked to a Sales Order
+		// (only when the rows came from the Towel Costing Sheet yarn balance)
+		let yarn_driven = frm.doc.sales_order && (frm.doc.bom_items || []).some((r) => flt(r.so_yarn_balance) > 0);
+		frm.set_df_property('fabric_qty', 'read_only', yarn_driven ? 1 : 0);
+
 		frm.set_query('construction', function() {
 			return {
 				"filters": {
@@ -128,12 +133,52 @@ frappe.ui.form.on('Weaving Contract', {
 			}
 		})
 
+	},
+
+	// 2026-09-28 (feature v3) - "yarn qty will be recalculated upon
+	// changing Order Qty. yarn qty = yarn reqd per lbs (from TCS) *
+	// order qty" (your words). Only fires when the field is actually
+	// editable - it's read-only whenever this contract is yarn-driven
+	// (see the read_only toggle in refresh above), so this only applies
+	// to a contract where you're typing Order Qty in yourself.
+	fabric_qty: function(frm) {
+		if (!(frm.doc.sales_order && frm.doc.construction)) {
+			return;
+		}
+		frm.call({
+			method: "recalc_yarn_from_order_qty",
+			doc: frm.doc,
+			freeze: true
+		}).then(() => {
+			frm.dirty();
+			frm.refresh_field("bom_items");
+			frm.refresh_fields(["total_yarn", "total_bags", "total_consumption", "fabric_qty"]);
+		});
 	}
 });
 
 frappe.ui.form.on('BOM Items', {
-	yarn_qty: function(frm) {
+	// 2026-09-26 - contracts are split by yarn lbs: Yarn Qty is editable,
+	// Required Bags follows it (Yarn Qty / Lbs per Bag). Fabric Qty is
+	// recalculated from the lbs on save (server-side).
+	yarn_qty: function(frm, cdt, cdn) {
+		let row = locals[cdt][cdn];
+		if (flt(row.lbs_per_bag)) {
+			frappe.model.set_value(cdt, cdn, "required_bags", flt(row.yarn_qty) / flt(row.lbs_per_bag));
+		}
+		if (flt(row.so_yarn_balance) && flt(row.yarn_qty) > flt(row.so_yarn_balance) + 0.001) {
+			frappe.show_alert({
+				message: __("{0}: {1} lbs is more than the {2} lbs left on the Sales Order", [row.yarn_count, format_number(row.yarn_qty), format_number(row.so_yarn_balance)]),
+				indicator: "orange"
+			});
+		}
 		calculate_total(frm);
+	},
+	lbs_per_bag: function(frm, cdt, cdn) {
+		let row = locals[cdt][cdn];
+		if (flt(row.lbs_per_bag)) {
+			frappe.model.set_value(cdt, cdn, "required_bags", flt(row.yarn_qty) / flt(row.lbs_per_bag));
+		}
 	},
 	required_bags: function(frm) {
 		calculate_total(frm);
@@ -371,7 +416,9 @@ function pick_sales_order_item(frm, sales_order, items) {
 	// instead of a single Sales Order Item row name.
 	let by_label = {}
 	let options = items.map(function(d) {
-		let label = `${d.item_code} (Balance: ${d.balance_qty})`
+		let label = flt(d.yarn_balance_lbs)
+			? `${d.item_code} (Yarn balance: ${format_number(d.yarn_balance_lbs)} lbs)`
+			: `${d.item_code} (Balance: ${d.balance_qty})`
 		by_label[label] = d
 		return label
 	})
@@ -420,6 +467,8 @@ function apply_sales_order_item(frm, sales_order, data) {
 		child.ratio = row.ratio
 		child.weaving_wastage = row.weaving_wastage
 		child.yarn_qty = row.yarn_qty
+		child.so_yarn_balance = row.so_yarn_balance
+		child.lbs_per_bag = row.lbs_per_bag
 		child.required_bags = row.required_bags
 	})
 	frm.refresh_field('bom_items')
