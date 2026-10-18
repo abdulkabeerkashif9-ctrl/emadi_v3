@@ -1,4 +1,6 @@
 """Minimal cPanel UAPI client (API-token auth) for DNS handling on thesmarterp.com."""
+import time
+
 import requests
 
 from . import db, security
@@ -26,30 +28,64 @@ def save_settings(host, port, user, token, verify_tls=True, auth="token"):
              (security.encrypt(token),))
 
 
+_cache = {"key": None, "session": None, "token": None, "at": 0.0}
+
+
+def _session_login(cfg, force=False):
+    """Same flow as the browser login form: POST credentials, keep the session cookie + security token."""
+    key = (cfg["host"], cfg["port"], cfg["user"], cfg["token"])
+    if not force and _cache["key"] == key and time.time() - _cache["at"] < 600:
+        return _cache["session"], _cache["token"]
+    s = requests.Session()
+    s.verify = cfg["verify_tls"]
+    base = f"https://{cfg['host']}:{cfg['port']}"
+    try:
+        r = s.post(f"{base}/login/?login_only=1", data={"user": cfg["user"], "pass": cfg["token"]},
+                   timeout=25, allow_redirects=False)
+        j = r.json()
+    except requests.RequestException as e:
+        raise CPanelError(f"cPanel request failed: {e}")
+    except ValueError:
+        raise CPanelError(f"cPanel login returned HTTP {r.status_code} that was not JSON - check host/port.")
+    if r.status_code != 200 or not j.get("security_token"):
+        raise CPanelError(f"cPanel rejected the login for '{cfg['user']}' ({j.get('message') or 'invalid_login'}). "
+                          "Check username/password; two-factor must be off for password login.")
+    _cache.update(key=key, session=s, token=j["security_token"], at=time.time())
+    return s, j["security_token"]
+
+
 def call(module, function, **params):
     cfg = get_settings()
     if not cfg:
         raise CPanelError("cPanel is not configured (Settings page)")
-    url = f"https://{cfg['host']}:{cfg['port']}/execute/{module}/{function}"
-    try:
-        if cfg["auth"] == "password":
-            kw = {"auth": (cfg["user"], cfg["token"])}
-        else:
-            kw = {"headers": {"Authorization": f"cpanel {cfg['user']}:{cfg['token']}"}}
-        r = requests.get(url, params=params, timeout=25, verify=cfg["verify_tls"], allow_redirects=False, **kw)
-    except requests.RequestException as e:
-        raise CPanelError(f"cPanel request failed: {e}")
-    try:
-        data = r.json()
-    except ValueError:
-        snippet = " ".join(r.text.split())[:160]
-        hint = ("This is not the cPanel API. Check host/port: use the exact address you open cPanel with "
-                "(usually port 2083, or 443 for cpanel.yourdomain.com), and that it is not your website or a proxy.")
-        if r.status_code in (301, 302, 303, 307, 308):
-            hint = f"Redirected to {r.headers.get('Location')} - use that host/port, or check username/password."
-        elif r.status_code in (401, 403):
-            hint = "Login rejected - check username and token/password (cPanel 2FA must be off for password login)."
-        raise CPanelError(f"HTTP {r.status_code} from {url} (signed in as '{cfg['user']}' using {cfg['auth']}) was not JSON: '{snippet}'. {hint}")
+    base = f"https://{cfg['host']}:{cfg['port']}"
+    for attempt in (1, 2):
+        try:
+            if cfg["auth"] == "password":
+                sess, tok = _session_login(cfg, force=attempt == 2)
+                url = f"{base}{tok}/execute/{module}/{function}"
+                r = sess.get(url, params=params, timeout=25, allow_redirects=False)
+            else:
+                url = f"{base}/execute/{module}/{function}"
+                r = requests.get(url, params=params, timeout=25, verify=cfg["verify_tls"], allow_redirects=False,
+                                 headers={"Authorization": f"cpanel {cfg['user']}:{cfg['token']}"})
+        except requests.RequestException as e:
+            raise CPanelError(f"cPanel request failed: {e}")
+        try:
+            data = r.json()
+            break
+        except ValueError:
+            if cfg["auth"] == "password" and attempt == 1:
+                continue  # session expired: log in again once
+            snippet = " ".join(r.text.split())[:160]
+            hint = ("This is not the cPanel API. Check host/port: use the exact address you open cPanel with "
+                    "(usually port 2083, or 443 for cpanel.yourdomain.com), and that it is not your website or a proxy.")
+            if r.status_code in (301, 302, 303, 307, 308):
+                hint = f"Redirected to {r.headers.get('Location')} - use that host/port, or check username/password."
+            elif r.status_code in (401, 403):
+                hint = "Login rejected - check username and API token (the host may also have API tokens disabled)."
+            raise CPanelError(f"HTTP {r.status_code} from {url} (signed in as '{cfg['user']}' using {cfg['auth']}) "
+                              f"was not JSON: '{snippet}'. {hint}")
     if data.get("status") != 1:
         raise CPanelError("; ".join(data.get("errors") or []) or f"cPanel error (HTTP {r.status_code})")
     return data.get("data")
