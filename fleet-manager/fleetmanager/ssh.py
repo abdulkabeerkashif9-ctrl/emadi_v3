@@ -1,0 +1,143 @@
+"""SSH access to VPSes. Host keys are trusted on first use and pinned afterwards."""
+import io
+import shlex
+import time
+
+import paramiko
+
+from . import config, db, security
+
+
+class SSHError(Exception):
+    pass
+
+
+def manager_public_key():
+    """Keypair this app uses; the bootstrap script authorises it on new VPSes."""
+    config.ensure_dirs()
+    if not config.SSH_KEY_PATH.exists():
+        k = paramiko.Ed25519Key.generate() if hasattr(paramiko, "Ed25519Key") and hasattr(paramiko.Ed25519Key, "generate") else None
+        if k is None:  # older paramiko: fall back to RSA
+            k = paramiko.RSAKey.generate(3072)
+        k.write_private_key_file(str(config.SSH_KEY_PATH))
+    k = _load_key(config.SSH_KEY_PATH.read_text())
+    return f"{k.get_name()} {k.get_base64()} fleet-manager"
+
+
+def _load_key(text):
+    for cls in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+        try:
+            return cls.from_private_key(io.StringIO(text))
+        except Exception:
+            continue
+    raise SSHError("Unsupported or encrypted private key (passphrase keys are not supported)")
+
+
+class Runner:
+    def __init__(self, server, log=None):
+        self.s = server
+        self.log = log or (lambda _t: None)
+        self.client = None
+        self.secret = security.decrypt(server.get("secret_enc"))
+
+    def connect(self):
+        c = paramiko.SSHClient()
+        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        kw = dict(hostname=self.s["ip"], port=self.s["ssh_port"], username=self.s["ssh_user"],
+                  timeout=15, banner_timeout=20, auth_timeout=20, allow_agent=False, look_for_keys=False)
+        if self.s["auth_type"] == "password":
+            kw["password"] = self.secret
+        else:
+            kw["pkey"] = _load_key(self.secret)
+        try:
+            c.connect(**kw)
+        except Exception as e:
+            raise SSHError(f"Cannot connect to {self.s['ip']}: {e}")
+        fp = c.get_transport().get_remote_server_key().get_fingerprint().hex()
+        pinned = self.s.get("host_fingerprint")
+        if pinned and pinned != fp:
+            c.close()
+            raise SSHError("Host key changed since first connection (possible MITM or re-installed VPS). "
+                           "Edit the server and clear the fingerprint if this is expected.")
+        if not pinned and self.s.get("id"):
+            db.x("UPDATE servers SET host_fingerprint=? WHERE id=?", (fp, self.s["id"]))
+            self.s["host_fingerprint"] = fp
+        self.client = c
+        return self
+
+    def __enter__(self):
+        return self.connect()
+
+    def __exit__(self, *a):
+        self.close()
+
+    def close(self):
+        if self.client:
+            self.client.close()
+            self.client = None
+
+    def run(self, cmd, sudo=False, as_user=None, check=False, stream=True, timeout=3600):
+        """Run a shell command; sudo=True as root, as_user=<name> as that user (login shell)."""
+        login = self.s["ssh_user"]
+        q = shlex.quote
+        if as_user and as_user != login:
+            argv = f"-u {q(as_user)} -H bash -lc {q(cmd)}"
+        elif sudo and login != "root":
+            argv = f"bash -c {q(cmd)}"
+        else:
+            if as_user:  # already that user: just get a login shell (PATH, nvm, ~/.local/bin)
+                cmd = f"bash -lc {q(cmd)}"
+            return self._exec(cmd, None, check, stream, timeout)
+        stdin_pw = None
+        if login == "root":
+            full = f"sudo {argv}"
+        elif self.s["auth_type"] == "password":
+            full, stdin_pw = f"sudo -S -p '' {argv}", self.secret
+        else:
+            full = f"sudo -n {argv}"
+        return self._exec(full, stdin_pw, check, stream, timeout)
+
+    def _exec(self, full, stdin_pw, check, stream, timeout):
+        chan = self.client.get_transport().open_session()
+        chan.set_combine_stderr(True)
+        chan.settimeout(timeout)
+        chan.exec_command(full)
+        if stdin_pw:
+            chan.sendall(stdin_pw + "\n")
+        out, start = [], time.time()
+        while True:
+            if chan.recv_ready():
+                data = chan.recv(65536).decode("utf-8", "replace")
+                out.append(data)
+                if stream:
+                    self.log(data)
+            elif chan.exit_status_ready():
+                while chan.recv_ready():
+                    data = chan.recv(65536).decode("utf-8", "replace")
+                    out.append(data)
+                    if stream:
+                        self.log(data)
+                break
+            else:
+                if time.time() - start > timeout:
+                    chan.close()
+                    raise SSHError("Command timed out")
+                time.sleep(0.1)
+        code = chan.recv_exit_status()
+        text = "".join(out)
+        if check and code != 0:
+            raise SSHError(f"Command failed (exit {code}): {full[:200]}")
+        return code, text
+
+    def write_file(self, path, content, mode=0o644):
+        sftp = self.client.open_sftp()
+        try:
+            with sftp.open(path, "w") as f:
+                f.write(content)
+            sftp.chmod(path, mode)
+        finally:
+            sftp.close()
+
+
+def runner_for(server, log=None):
+    return Runner(server, log)
