@@ -130,7 +130,11 @@ sudo -u {BENCH_USER} -H bash -lc '
 echo "== [9/9] Production (nginx + supervisor) and firewall"
 cd /home/{BENCH_USER}/frappe-bench
 env PATH=/home/{BENCH_USER}/.local/bin:$PATH bench setup production {BENCH_USER} --yes
-ufw allow {server['ssh_port']}/tcp; ufw allow 80/tcp; ufw allow 443/tcp; ufw --force enable
+# allow every port sshd really listens on (providers often forward a custom public port to 22), plus the configured one
+for p in {server['ssh_port']} 22 $(ss -H -tlnp 2>/dev/null | awk '/sshd/{{n=split($4,a,":"); print a[n]}}' | sort -u); do
+  ufw allow "$p"/tcp
+done
+ufw allow 80/tcp; ufw allow 443/tcp; ufw --force enable
 echo "== DONE"
 """
 
