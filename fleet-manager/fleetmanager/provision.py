@@ -23,6 +23,8 @@ case "$ID $VERSION_ID" in
   *) echo "WARNING: tested on Ubuntu 22.04/24.04 only (found $PRETTY_NAME)";;
 esac
 export DEBIAN_FRONTEND=noninteractive
+# a fresh VPS runs unattended-upgrades for a while; make every apt/dpkg call (also in child scripts) wait for its lock
+mkdir -p /etc/apt/apt.conf.d && echo 'DPkg::Lock::Timeout "900";' > /etc/apt/apt.conf.d/99fleet-lock
 apt-get update -y
 apt-get install -y openssh-server sudo curl ca-certificates ufw
 systemctl enable --now ssh || systemctl enable --now sshd || true
@@ -52,6 +54,8 @@ def configure_script(server, db_root_pw):
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+# a fresh VPS runs unattended-upgrades for a while; make every apt/dpkg call (also in child scripts) wait for its lock
+mkdir -p /etc/apt/apt.conf.d && echo 'DPkg::Lock::Timeout "900";' > /etc/apt/apt.conf.d/99fleet-lock
 . /etc/os-release
 echo "== OS: $PRETTY_NAME"
 [ "$ID" = ubuntu ] || {{ echo "Only Ubuntu 22.04/24.04 is supported"; exit 1; }}
