@@ -116,10 +116,12 @@ sudo -u {BENCH_USER} -H bash -lc '
   set -euo pipefail
   export PATH=$HOME/.local/bin:$PATH
   grep -q ".local/bin" ~/.profile || echo "export PATH=\\$HOME/.local/bin:\\$PATH" >> ~/.profile
+  command -v uv >/dev/null || pipx install uv
   command -v bench >/dev/null || pipx install frappe-bench
   cd ~
   if [ ! -d frappe-bench/apps/frappe ]; then
-    bench init frappe-bench --frappe-branch {server['version']} --python python{py} --verbose
+    rm -rf frappe-bench   # leftover from a failed earlier attempt
+    bench init frappe-bench --frappe-branch {server['version']} --python python{py} --verbose </dev/null
   fi
   cd frappe-bench
   bench config dns_multitenant on

@@ -104,6 +104,7 @@ class Runner:
         chan.exec_command(full)
         if stdin_pw:
             chan.sendall(stdin_pw + "\n")
+        chan.shutdown_write()  # EOF on stdin so interactive prompts fail fast instead of hanging forever
         out, start = [], time.time()
         while True:
             if chan.recv_ready():

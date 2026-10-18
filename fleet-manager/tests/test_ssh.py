@@ -21,7 +21,17 @@ class Srv(paramiko.ServerInterface):
     def check_channel_request(self, kind, cid): return paramiko.OPEN_SUCCEEDED
     def check_channel_exec_request(self, chan, command):
         def go():
-            p = subprocess.Popen(["bash", "-c", command.decode()], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            p = subprocess.Popen(["bash", "-c", command.decode()], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE)
+
+            def feed():
+                while True:
+                    d = chan.recv(1024)
+                    if not d:
+                        break
+                    p.stdin.write(d)
+                    p.stdin.flush()
+                p.stdin.close()
+            threading.Thread(target=feed, daemon=True).start()
             for chunk in iter(lambda: p.stdout.read(64), b""):
                 chan.sendall(chunk)
             chan.send_exit_status(p.wait())
@@ -93,3 +103,10 @@ def test_wrong_password_and_host_key_pinning(sshd):
 def test_manager_key_is_stable():
     a = ssh.manager_public_key()
     assert a.startswith("ssh-") and a == ssh.manager_public_key()
+
+
+def test_stdin_gets_eof_so_prompts_cannot_hang(sshd):
+    port, _ = sshd
+    with Runner(server_row(port)) as r:
+        code, text = r.run("read -p 'Continue? [y/N]: ' a || echo EOF_SEEN", stream=False, timeout=10)
+        assert "EOF_SEEN" in text
