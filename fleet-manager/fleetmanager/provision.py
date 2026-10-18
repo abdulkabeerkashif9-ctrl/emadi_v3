@@ -143,6 +143,12 @@ sudo -u {BENCH_USER} -H bash -lc '
 echo "== [9/9] Production (nginx + supervisor) and firewall"
 cd /home/{BENCH_USER}/frappe-bench
 env PATH=/home/{BENCH_USER}/.local/bin:$PATH bench setup production {BENCH_USER} --yes
+# make sure supervisor really has bench's programs (redis, web, workers, scheduler)
+sudo -u {BENCH_USER} -H bash -lc 'cd ~/frappe-bench && export PATH=$HOME/.local/bin:$PATH && bench setup redis && bench setup supervisor --yes' || true
+ln -sf /home/{BENCH_USER}/frappe-bench/config/supervisor.conf /etc/supervisor/conf.d/frappe-bench.conf
+systemctl enable --now supervisor || true
+supervisorctl reread || true; supervisorctl update || true; sleep 8
+supervisorctl status || true
 # allow every port sshd really listens on (providers often forward a custom public port to 22), plus the configured one
 for p in {server['ssh_port']} 22 $(ss -H -tlnp 2>/dev/null | awk '/sshd/{{n=split($4,a,":"); print a[n]}}' | sort -u); do
   ufw allow "$p"/tcp
@@ -367,9 +373,10 @@ def ensure_bench_services(r, s, log):
     if _redis_up(r):
         return
     log("\n>>> Bench redis is not running; (re)starting bench services via supervisor\n")
-    r.run(_bench(s, "bench setup supervisor --yes"), as_user=BENCH_USER)
-    r.run("systemctl enable --now supervisor 2>/dev/null; supervisorctl reread; supervisorctl update; "
-          "supervisorctl restart all; sleep 8", sudo=True)
+    r.run(_bench(s, "bench setup redis && bench setup supervisor --yes"), as_user=BENCH_USER)
+    r.run(f"ln -sf {shlex.quote(s['bench_path'])}/config/supervisor.conf /etc/supervisor/conf.d/frappe-bench.conf; "
+          "systemctl enable --now supervisor 2>/dev/null; supervisorctl reread; supervisorctl update; "
+          "supervisorctl restart all; sleep 10", sudo=True)
     if not _redis_up(r):
         _, st = r.run("supervisorctl status 2>&1 | head -30; ss -tlnp | grep -E ':(11000|13000) ' || true", sudo=True, stream=False)
         raise RuntimeError("Bench redis still not reachable on ports 11000/13000. supervisor says:\n" + st)
