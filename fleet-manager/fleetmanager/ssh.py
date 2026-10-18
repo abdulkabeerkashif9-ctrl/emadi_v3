@@ -52,7 +52,8 @@ class Runner:
         try:
             c.connect(**kw)
         except Exception as e:
-            raise SSHError(f"Cannot connect to {self.s['ip']}: {e}")
+            raise SSHError(f"Cannot connect to {self.s['ssh_user']}@{self.s['ip']} on port {self.s['ssh_port']}: {e}. "
+                           "Check the SSH port in the server settings and that the VPS firewall allows it.")
         fp = c.get_transport().get_remote_server_key().get_fingerprint().hex()
         pinned = self.s.get("host_fingerprint")
         if pinned and pinned != fp:
