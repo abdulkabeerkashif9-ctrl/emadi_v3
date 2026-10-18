@@ -354,6 +354,28 @@ def get_app(s, r, name, log):
     db.x("INSERT OR IGNORE INTO server_apps VALUES(?,?)", (s["id"], name))
 
 
+REDIS_PORTS = (11000, 13000)  # bench's own redis queue / cache (not the system redis on 6379)
+
+
+def _redis_up(r):
+    chk = " && ".join(f"(echo > /dev/tcp/127.0.0.1/{p}) 2>/dev/null" for p in REDIS_PORTS)
+    return r.run(chk, stream=False)[0] == 0
+
+
+def ensure_bench_services(r, s, log):
+    """bench needs its redis instances (run by supervisor) before new-site/install-app can enqueue jobs."""
+    if _redis_up(r):
+        return
+    log("\n>>> Bench redis is not running; (re)starting bench services via supervisor\n")
+    r.run(_bench(s, "bench setup supervisor --yes"), as_user=BENCH_USER)
+    r.run("systemctl enable --now supervisor 2>/dev/null; supervisorctl reread; supervisorctl update; "
+          "supervisorctl restart all; sleep 8", sudo=True)
+    if not _redis_up(r):
+        _, st = r.run("supervisorctl status 2>&1 | head -30; ss -tlnp | grep -E ':(11000|13000) ' || true", sudo=True, stream=False)
+        raise RuntimeError("Bench redis still not reachable on ports 11000/13000. supervisor says:\n" + st)
+    log("Bench services are up.\n")
+
+
 def ensure_db_root_password(r, s):
     """Make sure MariaDB root accepts the stored password over TCP (what bench new-site uses)."""
     pw = security.decrypt(s["db_root_pw_enc"])
@@ -394,6 +416,7 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
                 log("\n>>> Restarting bench services to load new apps\n")
                 r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
             ensure_db_root_password(r, s)
+            ensure_bench_services(r, s, log)
             site_dir = shlex.quote(f"{s['bench_path']}/sites/{domain}")
             if r.run(f"test -d {site_dir}", as_user=BENCH_USER, stream=False)[0] == 0:
                 if r.run(f"test -f {site_dir}/site_config.json", as_user=BENCH_USER, stream=False)[0] == 0:
@@ -408,13 +431,21 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
                             as_user=BENCH_USER)
             if code != 0:
                 raise ssh.SSHError(f"bench new-site failed (exit {code})")
-            for n in apps:
-                log(f"\n>>> Installing {n} on {domain}\n")
-                code, _ = r.run(_bench(s, f"bench --site {shlex.quote(domain)} install-app {shlex.quote(n)}"), as_user=BENCH_USER)
-                if code != 0:
-                    raise ssh.SSHError(f"install-app {n} failed (exit {code})")
-            log("\n>>> Configuring nginx\n")
-            r.run(_bench(s, "bench setup nginx --yes && sudo systemctl reload nginx"), as_user=BENCH_USER, check=True)
+            try:
+                for n in apps:
+                    log(f"\n>>> Installing {n} on {domain}\n")
+                    code, _ = r.run(_bench(s, f"bench --site {shlex.quote(domain)} install-app {shlex.quote(n)}"), as_user=BENCH_USER)
+                    if code != 0:
+                        raise ssh.SSHError(f"install-app {n} failed (exit {code})")
+                log("\n>>> Configuring nginx\n")
+                r.run(_bench(s, "bench setup nginx --yes && sudo systemctl reload nginx"), as_user=BENCH_USER, check=True)
+            except Exception:
+                # we created this site a moment ago in this job, so it is safe to remove the half-built remains
+                log(f"\n>>> Rolling back: removing the incomplete site {domain}\n")
+                r.run(_bench(s, f"bench drop-site {shlex.quote(domain)} --force --no-backup "
+                                f"--db-root-password {shlex.quote(security.decrypt(s['db_root_pw_enc']))}"),
+                      as_user=BENCH_USER, stream=False)
+                raise
             if enable_ssl:
                 if s["ip"] in domains.resolve(domain):
                     log("\n>>> Requesting Let's Encrypt certificate\n")

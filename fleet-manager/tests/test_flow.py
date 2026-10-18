@@ -158,3 +158,32 @@ def test_existing_working_site_is_never_overwritten(client, monkeypatch):
     job = _create(client, "real.example.com")
     assert job["status"] == "failed" and "already exists" in job["log"]
     assert not any("rm -rf" in c[1] or "new-site" in c[1] for c in FakeRunner.calls if c[0] == "run")
+
+
+def test_redis_down_triggers_supervisor_restart(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr(domains, "resolve", lambda d: [])
+    FakeRunner.redis_down = 1          # first probe fails, probe after restart succeeds
+    assert _create(client, "redis1.example.com")["status"] == "done"
+    cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
+    assert any("setup supervisor" in c for c in cmds) and any("supervisorctl restart all" in c for c in cmds)
+
+
+def test_redis_still_down_fails_with_supervisor_status(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr(domains, "resolve", lambda d: [])
+    FakeRunner.redis_down = 99
+    job = _create(client, "redis2.example.com")
+    assert job["status"] == "failed" and "still not reachable" in job["log"]
+    assert not any("new-site" in c[1] for c in FakeRunner.calls if c[0] == "run")
+
+
+def test_failed_install_rolls_back_the_new_site(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr(domains, "resolve", lambda d: [])
+    orig = FakeRunner.run
+    monkeypatch.setattr(FakeRunner, "run", lambda self, cmd, **k: (1, "boom") if "install-app" in cmd else orig(self, cmd, **k))
+    job = _create(client, "rollback.example.com")
+    assert job["status"] == "failed" and "Rolling back" in job["log"]
+    cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
+    assert any("drop-site rollback.example.com" in c and "--no-backup" in c for c in cmds)

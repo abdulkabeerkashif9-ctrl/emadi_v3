@@ -18,6 +18,7 @@ class FakeRunner:
     calls = []
     apps = ["erpnext"]
     sites = ["old.example.com"]
+    redis_down = 0   # number of redis probes that fail
     leftover = None  # None: no dir; 'failed': dir without site_config.json; 'real': working site
 
     def __init__(self, server, log=None):
@@ -31,6 +32,11 @@ class FakeRunner:
     def run(self, cmd, sudo=False, as_user=None, check=False, stream=True, timeout=0):
         FakeRunner.calls.append(("run", cmd))
         out = ""
+        if "/dev/tcp/127.0.0.1/" in cmd:
+            if FakeRunner.redis_down > 0:
+                FakeRunner.redis_down -= 1
+                return 1, ""
+            return 0, ""
         if cmd.startswith("test -d"):
             return (0 if FakeRunner.leftover is not None else 1), ""
         if cmd.startswith("test -f"):
@@ -65,6 +71,7 @@ def client():
 def fake_ssh(monkeypatch):
     FakeRunner.calls, FakeRunner.apps, FakeRunner.sites = [], ["erpnext"], ["old.example.com"]
     FakeRunner.leftover = None
+    FakeRunner.redis_down = 0
     monkeypatch.setattr(ssh, "Runner", FakeRunner)
     monkeypatch.setattr(provision.ssh, "Runner", FakeRunner)
     monkeypatch.setattr(main.ssh, "Runner", FakeRunner)
