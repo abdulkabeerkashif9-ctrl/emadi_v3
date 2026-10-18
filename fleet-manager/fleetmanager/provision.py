@@ -62,7 +62,7 @@ apt-get install -y git curl wget ca-certificates software-properties-common buil
   python3-dev python3-setuptools python3-pip python3-venv pipx redis-server \\
   mariadb-server mariadb-client libmariadb-dev pkg-config libffi-dev libssl-dev \\
   xvfb libfontconfig fontconfig libxrender1 libxext6 xfonts-75dpi xfonts-base \\
-  nginx supervisor cron ufw openssl certbot
+  nginx supervisor cron ufw openssl certbot fail2ban ansible-core
 
 echo "== [2/9] Swap (if RAM is small)"
 if [ "$(free -m | awk '/Mem:/{{print $2}}')" -lt 3800 ] && [ -z "$(swapon --show --noheadings)" ]; then
