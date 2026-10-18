@@ -49,7 +49,7 @@ def call(module, function, **params):
             hint = f"Redirected to {r.headers.get('Location')} - use that host/port, or check username/password."
         elif r.status_code in (401, 403):
             hint = "Login rejected - check username and token/password (cPanel 2FA must be off for password login)."
-        raise CPanelError(f"HTTP {r.status_code} from {url} was not JSON: '{snippet}'. {hint}")
+        raise CPanelError(f"HTTP {r.status_code} from {url} (signed in as '{cfg['user']}' using {cfg['auth']}) was not JSON: '{snippet}'. {hint}")
     if data.get("status") != 1:
         raise CPanelError("; ".join(data.get("errors") or []) or f"cPanel error (HTTP {r.status_code})")
     return data.get("data")
