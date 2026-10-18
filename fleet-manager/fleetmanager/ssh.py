@@ -49,11 +49,22 @@ class Runner:
             kw["password"] = self.secret
         else:
             kw["pkey"] = _load_key(self.secret)
-        try:
-            c.connect(**kw)
-        except Exception as e:
-            raise SSHError(f"Cannot connect to {self.s['ssh_user']}@{self.s['ip']} on port {self.s['ssh_port']}: {e}. "
+        last = None
+        for attempt in range(3):
+            try:
+                c.connect(**kw)
+                last = None
+                break
+            except paramiko.AuthenticationException as e:
+                raise SSHError(f"Login to {self.s['ssh_user']}@{self.s['ip']}:{self.s['ssh_port']} was rejected: {e}. "
+                               "Check the SSH user and password/key.")
+            except Exception as e:  # network trouble: wait and try again
+                last = e
+                time.sleep(2 * (attempt + 1))
+        if last is not None:
+            raise SSHError(f"Cannot connect to {self.s['ssh_user']}@{self.s['ip']} on port {self.s['ssh_port']}: {last}. "
                            "Check the SSH port in the server settings and that the VPS firewall allows it.")
+        c.get_transport().set_keepalive(20)  # stops idle firewalls/NAT from dropping long installs
         fp = c.get_transport().get_remote_server_key().get_fingerprint().hex()
         pinned = self.s.get("host_fingerprint")
         if pinned and pinned != fp:
@@ -99,6 +110,21 @@ class Runner:
         return self._exec(full, stdin_pw, check, stream, timeout)
 
     def _exec(self, full, stdin_pw, check, stream, timeout):
+        """Run once; if the connection drops, quiet short commands reconnect and retry once."""
+        for attempt in (1, 2):
+            try:
+                return self._exec_once(full, stdin_pw, check, stream, timeout)
+            except SSHError:
+                raise
+            except (OSError, EOFError, paramiko.SSHException) as e:
+                if attempt == 1 and not stream:
+                    self.close()
+                    self.connect()
+                    continue
+                raise SSHError(f"The connection to the VPS was lost ({e}). If this happened during an install, "
+                               "the command may still be running on the server; wait a few minutes, then retry.")
+
+    def _exec_once(self, full, stdin_pw, check, stream, timeout):
         chan = self.client.get_transport().open_session()
         chan.set_combine_stderr(True)
         chan.settimeout(timeout)

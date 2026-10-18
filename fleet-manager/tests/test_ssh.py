@@ -110,3 +110,47 @@ def test_stdin_gets_eof_so_prompts_cannot_hang(sshd):
     with Runner(server_row(port)) as r:
         code, text = r.run("read -p 'Continue? [y/N]: ' a || echo EOF_SEEN", stream=False, timeout=10)
         assert "EOF_SEEN" in text
+
+
+class _Chan:
+    def __init__(self, out, code=0): self.out, self.code, self.sent = out, code, False
+    def set_combine_stderr(self, v): pass
+    def settimeout(self, t): pass
+    def exec_command(self, c): pass
+    def sendall(self, d): pass
+    def shutdown_write(self): pass
+    def recv_ready(self): return not self.sent
+    def recv(self, n): self.sent = True; return self.out
+    def exit_status_ready(self): return self.sent
+    def recv_exit_status(self): return self.code
+    def close(self): pass
+
+
+class _Client:
+    def __init__(self, fail): self.fail = fail
+    def get_transport(self): return self
+    def open_session(self):
+        if self.fail:
+            raise ConnectionResetError(10054, "forcibly closed")
+        return _Chan(b"ok")
+    def close(self): pass
+
+
+def _runner(first_fails):
+    r = Runner({"ip": "x", "ssh_port": 22, "ssh_user": "root", "auth_type": "password", "secret_enc": None})
+    r.client = _Client(first_fails)
+    calls = []
+    r.connect = lambda: (calls.append(1), setattr(r, "client", _Client(False)))[0] or r
+    return r, calls
+
+
+def test_quiet_command_reconnects_after_connection_reset():
+    r, calls = _runner(True)
+    assert r.run("echo hi", stream=False) == (0, "ok") and calls == [1]
+
+
+def test_streamed_command_reports_lost_connection_instead_of_retrying():
+    r, calls = _runner(True)
+    with pytest.raises(ssh.SSHError, match="connection to the VPS was lost"):
+        r.run("long install")
+    assert calls == []
