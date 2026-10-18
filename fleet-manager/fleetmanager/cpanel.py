@@ -54,7 +54,8 @@ def _session_login(cfg, force=False):
     return s, j["security_token"]
 
 
-def call(module, function, **params):
+def _get(path, params):
+    """GET <path> on cPanel with whichever auth is configured; returns (parsed_json, url, response)."""
     cfg = get_settings()
     if not cfg:
         raise CPanelError("cPanel is not configured (Settings page)")
@@ -63,10 +64,10 @@ def call(module, function, **params):
         try:
             if cfg["auth"] == "password":
                 sess, tok = _session_login(cfg, force=attempt == 2)
-                url = f"{base}{tok}/execute/{module}/{function}"
+                url = f"{base}{tok}{path}"
                 r = sess.get(url, params=params, timeout=25, allow_redirects=False)
             else:
-                url = f"{base}/execute/{module}/{function}"
+                url = f"{base}{path}"
                 r = requests.get(url, params=params, timeout=25, verify=cfg["verify_tls"], allow_redirects=False,
                                  headers={"Authorization": f"cpanel {cfg['user']}:{cfg['token']}"})
         except requests.RequestException as e:
@@ -86,9 +87,30 @@ def call(module, function, **params):
                 hint = "Login rejected - check username and API token (the host may also have API tokens disabled)."
             raise CPanelError(f"HTTP {r.status_code} from {url} (signed in as '{cfg['user']}' using {cfg['auth']}) "
                               f"was not JSON: '{snippet}'. {hint}")
+    return data, r
+
+
+def call(module, function, **params):
+    """cPanel UAPI call."""
+    data, r = _get(f"/execute/{module}/{function}", params)
     if data.get("status") != 1:
         raise CPanelError("; ".join(data.get("errors") or []) or f"cPanel error (HTTP {r.status_code})")
     return data.get("data")
+
+
+def call_api2(module, function, **params):
+    """cPanel API 2 call (ZoneEdit lives here; UAPI has no ZoneEdit module)."""
+    data, r = _get("/json-api/cpanel", {"cpanel_jsonapi_user": "user", "cpanel_jsonapi_apiversion": 2,
+                                        "cpanel_jsonapi_module": module, "cpanel_jsonapi_func": function, **params})
+    res = data.get("cpanelresult") or {}
+    ev = res.get("event") or {}
+    if res.get("error") or ev.get("result") == 0:
+        raise CPanelError(res.get("error") or ev.get("reason") or f"cPanel API2 error (HTTP {r.status_code})")
+    rows = res.get("data") or []
+    # many API2 functions report failure as a single row with statusmsg
+    if rows and isinstance(rows[0], dict) and rows[0].get("status") in (0, "0") and rows[0].get("statusmsg"):
+        raise CPanelError(rows[0]["statusmsg"])
+    return rows
 
 
 def test():
@@ -113,20 +135,19 @@ def zone_for(domain):
 
 
 def records(zone):
-    rows = call("ZoneEdit", "fetchzone_records", domain=zone)
-    return rows or []
+    return call_api2("ZoneEdit", "fetchzone_records", domain=zone)
 
 
 def find_records(zone, domain):
     name = domain.rstrip(".") + "."
     out = []
     for r in records(zone):
-        if r.get("type") in ("A", "AAAA", "CNAME") and (r.get("dname") or "").rstrip(".") + "." == name:
-            vals = r.get("data_b64") or r.get("data") or []
-            out.append({"type": r["type"], "value": (r.get("record") or (vals[0] if vals else "")), "line": r.get("line")})
+        if r.get("type") in ("A", "AAAA", "CNAME") and (r.get("name") or "").rstrip(".") + "." == name:
+            out.append({"type": r["type"], "value": r.get("address") or r.get("cname") or r.get("record") or "",
+                        "line": r.get("line")})
     return out
 
 
 def add_a_record(zone, domain, ip, ttl=300):
     name = domain.rstrip(".") + "."
-    return call("ZoneEdit", "add_zone_record", domain=zone, name=name, type="A", address=ip, ttl=ttl)
+    return call_api2("ZoneEdit", "add_zone_record", domain=zone, name=name, type="A", address=ip, ttl=ttl, **{"class": "IN"})
