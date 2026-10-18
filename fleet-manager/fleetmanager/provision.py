@@ -444,8 +444,6 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
                     code, _ = r.run(_bench(s, f"bench --site {shlex.quote(domain)} install-app {shlex.quote(n)}"), as_user=BENCH_USER)
                     if code != 0:
                         raise ssh.SSHError(f"install-app {n} failed (exit {code})")
-                log("\n>>> Configuring nginx\n")
-                r.run(_bench(s, "bench setup nginx --yes && sudo systemctl reload nginx"), as_user=BENCH_USER, check=True)
             except Exception:
                 # we created this site a moment ago in this job, so it is safe to remove the half-built remains
                 log(f"\n>>> Rolling back: removing the incomplete site {domain}\n")
@@ -453,6 +451,17 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
                                 f"--db-root-password {shlex.quote(security.decrypt(s['db_root_pw_enc']))}"),
                       as_user=BENCH_USER, stream=False)
                 raise
+            log("\n>>> Configuring nginx\n")
+            code, _ = r.run(_bench(s, "bench setup nginx --yes"), as_user=BENCH_USER)
+            if code == 0:
+                code, _ = r.run("nginx -t && systemctl reload nginx", sudo=True)
+            if code != 0:
+                _, diag = r.run("echo '--- nginx -t'; nginx -t 2>&1; echo '--- journal'; journalctl -u nginx -n 12 --no-pager 2>&1; "
+                                "echo '--- listeners on 80/443'; ss -tlnp | grep -E ':(80|443) ' || true", sudo=True, stream=False)
+                log("\n" + diag)
+                raise RuntimeError(f"The site {domain} was created and ERPNext is installed, but nginx could not reload, "
+                                   "so it is not reachable yet. Fix nginx on the server (details above), then run "
+                                   "'sudo systemctl restart nginx' and press Refresh on the Servers page.")
             if enable_ssl:
                 if s["ip"] in domains.resolve(domain):
                     log("\n>>> Requesting Let's Encrypt certificate\n")

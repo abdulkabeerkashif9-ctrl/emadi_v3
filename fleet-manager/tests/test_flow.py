@@ -187,3 +187,14 @@ def test_failed_install_rolls_back_the_new_site(client, monkeypatch):
     assert job["status"] == "failed" and "Rolling back" in job["log"]
     cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
     assert any("drop-site rollback.example.com" in c and "--no-backup" in c for c in cmds)
+
+
+def test_nginx_failure_keeps_the_installed_site_and_shows_diagnostics(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr(domains, "resolve", lambda d: [])
+    orig = FakeRunner.run
+    monkeypatch.setattr(FakeRunner, "run", lambda self, cmd, **k: (1, "nginx: [emerg] bind() to 0.0.0.0:80 failed") if cmd.startswith("nginx -t &&") else orig(self, cmd, **k))
+    job = _create(client, "nginxfail.example.com")
+    assert job["status"] == "failed" and "nginx could not reload" in job["log"]
+    assert not any("drop-site" in c[1] for c in FakeRunner.calls if c[0] == "run")      # site is kept
+    assert [s for s in client.get("/api/sites").json() if s["domain"] == "nginxfail.example.com"]
