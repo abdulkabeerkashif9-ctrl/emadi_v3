@@ -7,6 +7,19 @@ from . import config, cpanel, db, domains, security, ssh
 
 BENCH_USER = "frappe"
 
+# A fresh VPS runs unattended-upgrades (sometimes stuck for hours) and holds the apt lock; stop it, repair, and go on.
+APT_PREP = """# a fresh VPS runs unattended-upgrades; make apt calls wait for the lock, and stop the updater if it is holding it
+mkdir -p /etc/apt/apt.conf.d && echo 'DPkg::Lock::Timeout "900";' > /etc/apt/apt.conf.d/99fleet-lock
+systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+if pgrep -f unattended-upgr >/dev/null 2>&1; then
+  echo "Stopping unattended-upgrades (it holds the package lock)..."
+  timeout 60 systemctl stop unattended-upgrades 2>/dev/null || true
+  pkill -f unattended-upgr 2>/dev/null || true
+  sleep 3
+  dpkg --configure -a || true
+fi
+"""
+
 
 # ---------------------------------------------------------------- bootstrap script (given to the user)
 def bootstrap_script(server):
@@ -23,9 +36,7 @@ case "$ID $VERSION_ID" in
   *) echo "WARNING: tested on Ubuntu 22.04/24.04 only (found $PRETTY_NAME)";;
 esac
 export DEBIAN_FRONTEND=noninteractive
-# a fresh VPS runs unattended-upgrades for a while; make every apt/dpkg call (also in child scripts) wait for its lock
-mkdir -p /etc/apt/apt.conf.d && echo 'DPkg::Lock::Timeout "900";' > /etc/apt/apt.conf.d/99fleet-lock
-apt-get update -y
+{APT_PREP}apt-get update -y
 apt-get install -y openssh-server sudo curl ca-certificates ufw
 systemctl enable --now ssh || systemctl enable --now sshd || true
 
@@ -54,9 +65,7 @@ def configure_script(server, db_root_pw):
     return f"""#!/usr/bin/env bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-# a fresh VPS runs unattended-upgrades for a while; make every apt/dpkg call (also in child scripts) wait for its lock
-mkdir -p /etc/apt/apt.conf.d && echo 'DPkg::Lock::Timeout "900";' > /etc/apt/apt.conf.d/99fleet-lock
-. /etc/os-release
+{APT_PREP}. /etc/os-release
 echo "== OS: $PRETTY_NAME"
 [ "$ID" = ubuntu ] || {{ echo "Only Ubuntu 22.04/24.04 is supported"; exit 1; }}
 
@@ -139,6 +148,7 @@ for p in {server['ssh_port']} 22 $(ss -H -tlnp 2>/dev/null | awk '/sshd/{{n=spli
   ufw allow "$p"/tcp
 done
 ufw allow 80/tcp; ufw allow 443/tcp; ufw --force enable
+systemctl start apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 echo "== DONE"
 """
 
