@@ -36,10 +36,20 @@ def call(module, function, **params):
             kw = {"auth": (cfg["user"], cfg["token"])}
         else:
             kw = {"headers": {"Authorization": f"cpanel {cfg['user']}:{cfg['token']}"}}
-        r = requests.get(url, params=params, timeout=25, verify=cfg["verify_tls"], **kw)
-        data = r.json()
-    except Exception as e:
+        r = requests.get(url, params=params, timeout=25, verify=cfg["verify_tls"], allow_redirects=False, **kw)
+    except requests.RequestException as e:
         raise CPanelError(f"cPanel request failed: {e}")
+    try:
+        data = r.json()
+    except ValueError:
+        snippet = " ".join(r.text.split())[:160]
+        hint = ("This is not the cPanel API. Check host/port: use the exact address you open cPanel with "
+                "(usually port 2083, or 443 for cpanel.yourdomain.com), and that it is not your website or a proxy.")
+        if r.status_code in (301, 302, 303, 307, 308):
+            hint = f"Redirected to {r.headers.get('Location')} - use that host/port, or check username/password."
+        elif r.status_code in (401, 403):
+            hint = "Login rejected - check username and token/password (cPanel 2FA must be off for password login)."
+        raise CPanelError(f"HTTP {r.status_code} from {url} was not JSON: '{snippet}'. {hint}")
     if data.get("status") != 1:
         raise CPanelError("; ".join(data.get("errors") or []) or f"cPanel error (HTTP {r.status_code})")
     return data.get("data")
