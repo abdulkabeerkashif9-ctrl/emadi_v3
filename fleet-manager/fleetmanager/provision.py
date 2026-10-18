@@ -7,6 +7,13 @@ from . import config, cpanel, db, domains, security, ssh
 
 BENCH_USER = "frappe"
 
+# Frappe's nginx template logs with a format called "main"; Ubuntu's nginx only defines "combined".
+NGINX_LOGFMT = ('log_format main \'$remote_addr - $remote_user [$time_local] "$request" '
+                '$status $body_bytes_sent "$http_referer" "$http_user_agent"\';')
+NGINX_LOGFMT_FILE = "/etc/nginx/conf.d/00-fleet-log-format.conf"
+NGINX_LOGFMT_CMD = (f"grep -rqs '^[[:space:]]*log_format[[:space:]]\\+main' /etc/nginx --include='*.conf' || "
+                    f"printf '%s\\n' {shlex.quote(NGINX_LOGFMT)} > {NGINX_LOGFMT_FILE}")
+
 # A fresh VPS runs unattended-upgrades (sometimes stuck for hours) and holds the apt lock; stop it, repair, and go on.
 APT_PREP = """# a fresh VPS runs unattended-upgrades; make apt calls wait for the lock, and stop the updater if it is holding it
 mkdir -p /etc/apt/apt.conf.d && echo 'DPkg::Lock::Timeout "900";' > /etc/apt/apt.conf.d/99fleet-lock
@@ -142,6 +149,7 @@ sudo -u {BENCH_USER} -H bash -lc '
 
 echo "== [9/9] Production (nginx + supervisor) and firewall"
 cd /home/{BENCH_USER}/frappe-bench
+{NGINX_LOGFMT_CMD}
 env PATH=/home/{BENCH_USER}/.local/bin:$PATH bench setup production {BENCH_USER} --yes
 # make sure supervisor really has bench's programs (redis, web, workers, scheduler)
 sudo -u {BENCH_USER} -H bash -lc 'cd ~/frappe-bench && export PATH=$HOME/.local/bin:$PATH && bench setup redis && bench setup supervisor --yes' || true
@@ -452,6 +460,7 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
                       as_user=BENCH_USER, stream=False)
                 raise
             log("\n>>> Configuring nginx\n")
+            r.run(NGINX_LOGFMT_CMD, sudo=True, stream=False)
             code, _ = r.run(_bench(s, "bench setup nginx --yes"), as_user=BENCH_USER)
             if code == 0:
                 code, _ = r.run("nginx -t && systemctl reload nginx", sudo=True)
