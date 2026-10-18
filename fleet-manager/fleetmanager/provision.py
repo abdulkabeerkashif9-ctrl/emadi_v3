@@ -27,10 +27,14 @@ apt-get update -y
 apt-get install -y openssh-server sudo curl ca-certificates ufw
 systemctl enable --now ssh || systemctl enable --now sshd || true
 
-# let Fleet Manager log in with its own key
-install -d -m 700 ~/.ssh
-touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
-grep -qF "{pub}" ~/.ssh/authorized_keys || echo "{pub}" >> ~/.ssh/authorized_keys
+# let Fleet Manager log in with its own key, as the SSH user entered in the app
+TARGET="{server['ssh_user']}"
+id "$TARGET" >/dev/null 2>&1 || {{ echo "User $TARGET does not exist on this VPS"; exit 1; }}
+HOME_DIR=$(getent passwd "$TARGET" | cut -d: -f6)
+install -d -m 700 -o "$TARGET" -g "$(id -gn "$TARGET")" "$HOME_DIR/.ssh"
+touch "$HOME_DIR/.ssh/authorized_keys"
+chown "$TARGET": "$HOME_DIR/.ssh/authorized_keys"; chmod 600 "$HOME_DIR/.ssh/authorized_keys"
+grep -qF "{pub}" "$HOME_DIR/.ssh/authorized_keys" || echo "{pub}" >> "$HOME_DIR/.ssh/authorized_keys"
 
 # keep SSH reachable if the firewall is enabled later
 ufw allow {server['ssh_port']}/tcp >/dev/null 2>&1 || true
