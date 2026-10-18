@@ -103,6 +103,8 @@ def test_create_site_asks_before_installing_missing_app(client, monkeypatch):
     cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
     order = [i for i, c in enumerate(cmds) if "get-app" in c or "new-site" in c or "install-app" in c or "setup nginx" in c]
     text = [cmds[i] for i in order]
+    first_new = next(i for i, c in enumerate(cmds) if "new-site" in c)
+    assert any("ALTER USER" in c and "mariadb -e" in c for c in cmds[:first_new])      # db root password ensured before new-site
     assert "get-app" in text[0] and "hrms" in text[0] and "version-15" in text[0]
     assert "new-site acme.example.com" in text[1]
     assert "install-app erpnext" in text[2] and "install-app hrms" in text[3] and "setup nginx" in text[4]

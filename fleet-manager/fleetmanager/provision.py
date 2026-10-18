@@ -114,9 +114,9 @@ collation-server = utf8mb4_unicode_ci
 default-character-set = utf8mb4
 CNF
 systemctl enable --now mariadb && systemctl restart mariadb
-if ! mariadb -uroot -p'{db_root_pw}' -e 'select 1' >/dev/null 2>&1; then
-  mariadb -e "ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket OR mysql_native_password USING PASSWORD('{db_root_pw}'); FLUSH PRIVILEGES;"
-fi
+# always (re)apply: a socket-auth login ignores the password, so "does the password work?" can't be tested as OS root
+mariadb -e "ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket OR mysql_native_password USING PASSWORD('{db_root_pw}'); FLUSH PRIVILEGES;"
+mariadb -uroot -p'{db_root_pw}' -h127.0.0.1 -e 'select 1' >/dev/null && echo "MariaDB root password OK over TCP"
 systemctl enable --now redis-server
 
 echo "== [7/9] '{BENCH_USER}' user"
@@ -354,6 +354,16 @@ def get_app(s, r, name, log):
     db.x("INSERT OR IGNORE INTO server_apps VALUES(?,?)", (s["id"], name))
 
 
+def ensure_db_root_password(r, s):
+    """Make sure MariaDB root accepts the stored password over TCP (what bench new-site uses)."""
+    pw = security.decrypt(s["db_root_pw_enc"])
+    sql = (f"ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket OR mysql_native_password "
+           f"USING PASSWORD('{pw}'); FLUSH PRIVILEGES;")
+    code, out = r.run(f"mariadb -e {shlex.quote(sql)}", sudo=True, stream=False)
+    if code != 0:
+        raise ssh.SSHError(f"Could not set the MariaDB root password: {out.strip()[:300]}")
+
+
 def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=False):
     site = db.q1("SELECT * FROM sites WHERE id=?", (site_id,))
     s = db.q1("SELECT * FROM servers WHERE id=?", (site["server_id"],))
@@ -376,6 +386,7 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
             if set(apps) - have:
                 log("\n>>> Restarting bench services to load new apps\n")
                 r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
+            ensure_db_root_password(r, s)
             log(f"\n>>> Creating site {domain} (a few minutes)\n")
             code, _ = r.run(_bench(s, f"bench new-site {shlex.quote(domain)} "
                                       f"--db-root-password {shlex.quote(security.decrypt(s['db_root_pw_enc']))} "
