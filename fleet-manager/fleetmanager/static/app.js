@@ -275,9 +275,10 @@ async function pageJobs(m) {
 async function pageSettings(m) {
   const c = await api("GET", "/api/settings/cpanel"), k = await api("GET", "/api/manager-key");
   m.innerHTML = `<div class="bar"><h2>Settings</h2></div>
-  <div class="card"><h3 style="margin-top:0">cPanel (thesmarterp.com)</h3><p class="muted">Used to check domains and create DNS records. Create an API token in cPanel → Security → Manage API Tokens.</p>
+  <div class="card"><h3 style="margin-top:0">cPanel (thesmarterp.com)</h3><p class="muted">Used to check domains and create DNS records. Use an API token (cPanel → Security → Manage API Tokens, or WHM → Development) — or, if your host hides tokens, your normal cPanel password.</p>
    <form id="f"><div class="row"><div><label>cPanel host</label><input name="host" required value="${esc(c.host)}" placeholder="thesmarterp.com or server hostname"></div><div><label>Port</label><input name="port" type="number" value="${c.port || 2083}"></div></div>
-   <div class="row"><div><label>cPanel username</label><input name="user" required value="${esc(c.user)}"></div><div><label>API token ${c.has_token ? '<span class="hint">(saved — leave blank to keep)</span>' : ""}</label><input name="token" type="password" autocomplete="off"></div></div>
+   <div class="row"><div><label>cPanel username</label><input name="user" required value="${esc(c.user)}"></div><div><label>Sign in with</label><select name="auth"><option value="token" ${c.auth !== "password" ? "selected" : ""}>API token</option><option value="password" ${c.auth === "password" ? "selected" : ""}>cPanel password (no 2FA)</option></select></div></div>
+   <label>API token or password ${c.has_token ? '<span class="hint">(saved — leave blank to keep)</span>' : ""}</label><input name="token" type="password" autocomplete="off">
    <label style="font-weight:500"><input type="checkbox" name="verify_tls" style="width:auto" ${c.verify_tls ? "checked" : ""}> Verify TLS certificate</label>
    <div style="margin-top:14px;display:flex;gap:8px"><button>Save</button><button type="button" class="ghost" id="test" ${c.configured ? "" : "disabled"}>Test connection</button></div></form></div>
   <div class="card"><h3 style="margin-top:0">Fleet Manager SSH key</h3><p class="muted">The bootstrap script authorises this public key on each VPS.</p><textarea readonly style="min-height:70px">${esc(k.public_key)}</textarea></div>`;

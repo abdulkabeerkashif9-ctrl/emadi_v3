@@ -406,20 +406,21 @@ class CPanelIn(BaseModel):
     host: str
     port: int = 2083
     user: str
-    token: str = ""
+    token: str = ""           # API token, or the cPanel password when auth == "password"
     verify_tls: bool = True
+    auth: str = Field(default="token", pattern="^(token|password)$")
 
 
 @app.get("/api/settings/cpanel")
 def cpanel_get(_=Depends(user)):
     c = cpanel.get_settings()
     return {"configured": bool(c), "host": c and c["host"], "port": c and c["port"], "user": c and c["user"],
-            "verify_tls": c["verify_tls"] if c else True, "has_token": bool(c and c["token"])}
+            "verify_tls": c["verify_tls"] if c else True, "auth": c["auth"] if c else "token", "has_token": bool(c and c["token"])}
 
 
 @app.put("/api/settings/cpanel")
 def cpanel_put(b: CPanelIn, _=Depends(user)):
-    cpanel.save_settings(b.host.strip(), b.port, b.user.strip(), b.token.strip(), b.verify_tls)
+    cpanel.save_settings(b.host.strip(), b.port, b.user.strip(), b.token.strip(), b.verify_tls, b.auth)
     return cpanel_get()
 
 

@@ -13,13 +13,13 @@ def get_settings():
     if not rows.get("cpanel_host"):
         return None
     return {"host": rows["cpanel_host"], "port": int(rows.get("cpanel_port") or 2083),
-            "user": rows.get("cpanel_user", ""), "token": security.decrypt(rows.get("cpanel_token")),
+            "user": rows.get("cpanel_user", ""), "token": security.decrypt(rows.get("cpanel_token")), "auth": rows.get("cpanel_auth", "token"),
             "verify_tls": rows.get("cpanel_verify", "1") == "1"}
 
 
-def save_settings(host, port, user, token, verify_tls=True):
+def save_settings(host, port, user, token, verify_tls=True, auth="token"):
     for k, v in (("cpanel_host", host), ("cpanel_port", str(port)), ("cpanel_user", user),
-                 ("cpanel_verify", "1" if verify_tls else "0")):
+                 ("cpanel_verify", "1" if verify_tls else "0"), ("cpanel_auth", auth)):
         db.x("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, v))
     if token:  # blank = keep existing
         db.x("INSERT INTO settings(key,value) VALUES('cpanel_token',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -32,8 +32,11 @@ def call(module, function, **params):
         raise CPanelError("cPanel is not configured (Settings page)")
     url = f"https://{cfg['host']}:{cfg['port']}/execute/{module}/{function}"
     try:
-        r = requests.get(url, params=params, timeout=25, verify=cfg["verify_tls"],
-                         headers={"Authorization": f"cpanel {cfg['user']}:{cfg['token']}"})
+        if cfg["auth"] == "password":
+            kw = {"auth": (cfg["user"], cfg["token"])}
+        else:
+            kw = {"headers": {"Authorization": f"cpanel {cfg['user']}:{cfg['token']}"}}
+        r = requests.get(url, params=params, timeout=25, verify=cfg["verify_tls"], **kw)
         data = r.json()
     except Exception as e:
         raise CPanelError(f"cPanel request failed: {e}")
