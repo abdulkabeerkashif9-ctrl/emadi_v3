@@ -6,6 +6,7 @@ from conftest import FakeRunner
 
 
 def login(client):
+    client.cookies.clear()
     st = client.get("/api/auth/state").json()
     if st["setup_needed"]:
         assert client.post("/api/auth/setup", json={"username": "admin", "password": "password123"}).status_code == 200
@@ -131,3 +132,29 @@ def test_cookie_tamper(client):
     client.cookies.set("fm_session", "garbage")
     assert client.get("/api/servers").status_code == 401
     login(client)
+
+
+def _create(client, domain):
+    sid = client.get("/api/servers").json()[0]["id"]
+    r = client.post("/api/sites", json={"domain": domain, "server_id": sid, "apps": ["erpnext"]})
+    assert r.status_code == 200, r.text
+    return wait_job(client, r.json()["job_id"])
+
+
+def test_leftover_dir_from_failed_attempt_is_removed(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr(domains, "resolve", lambda d: [])
+    FakeRunner.leftover = "failed"
+    assert _create(client, "again.example.com")["status"] == "done"
+    cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
+    assert any(c.startswith("bash -lc") is False and "rm -rf" in c for c in cmds)
+    assert [i for i, c in enumerate(cmds) if "rm -rf" in c][0] < [i for i, c in enumerate(cmds) if "new-site" in c][0]
+
+
+def test_existing_working_site_is_never_overwritten(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr(domains, "resolve", lambda d: [])
+    FakeRunner.leftover = "real"
+    job = _create(client, "real.example.com")
+    assert job["status"] == "failed" and "already exists" in job["log"]
+    assert not any("rm -rf" in c[1] or "new-site" in c[1] for c in FakeRunner.calls if c[0] == "run")

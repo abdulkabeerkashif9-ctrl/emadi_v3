@@ -18,6 +18,7 @@ class FakeRunner:
     calls = []
     apps = ["erpnext"]
     sites = ["old.example.com"]
+    leftover = None  # None: no dir; 'failed': dir without site_config.json; 'real': working site
 
     def __init__(self, server, log=None):
         self.s, self.log = server, log or (lambda t: None)
@@ -30,6 +31,10 @@ class FakeRunner:
     def run(self, cmd, sudo=False, as_user=None, check=False, stream=True, timeout=0):
         FakeRunner.calls.append(("run", cmd))
         out = ""
+        if cmd.startswith("test -d"):
+            return (0 if FakeRunner.leftover is not None else 1), ""
+        if cmd.startswith("test -f"):
+            return (0 if FakeRunner.leftover == "real" else 1), ""
         if "/proc/loadavg" in cmd:
             out = "LOAD 0.30\nCORES 2\nMEM 4000 1200\nDISK 35\nOS Ubuntu 22.04 LTS\n"
         elif cmd.startswith("ls -1") and "/apps" in cmd:
@@ -59,6 +64,7 @@ def client():
 @pytest.fixture(autouse=True)
 def fake_ssh(monkeypatch):
     FakeRunner.calls, FakeRunner.apps, FakeRunner.sites = [], ["erpnext"], ["old.example.com"]
+    FakeRunner.leftover = None
     monkeypatch.setattr(ssh, "Runner", FakeRunner)
     monkeypatch.setattr(provision.ssh, "Runner", FakeRunner)
     monkeypatch.setattr(main.ssh, "Runner", FakeRunner)

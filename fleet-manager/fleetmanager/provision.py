@@ -374,8 +374,15 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
             zone = cpanel.zone_for(domain)
             if not zone:
                 raise RuntimeError(f"{domain} is not in the connected cPanel account")
-            cpanel.add_a_record(zone, domain, s["ip"])
-            log(f">>> DNS: created A record {domain} -> {s['ip']} in {zone}\n")
+            have = cpanel.find_records(zone, domain)
+            if any(x["type"] == "A" and x["value"] == s["ip"] for x in have):
+                log(f">>> DNS: A record {domain} -> {s['ip']} already exists, leaving it\n")
+            elif have:
+                raise RuntimeError(f"DNS already has {', '.join(x['type'] + ' ' + x['value'] for x in have)} for {domain}; "
+                                   "remove it in cPanel Zone Editor first, or create the site without the DNS option")
+            else:
+                cpanel.add_a_record(zone, domain, s["ip"])
+                log(f">>> DNS: created A record {domain} -> {s['ip']} in {zone}\n")
         with ssh.Runner(s, log) as r:
             have = set(list_bench_apps(s, r))
             for n in apps:
@@ -387,6 +394,13 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
                 log("\n>>> Restarting bench services to load new apps\n")
                 r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
             ensure_db_root_password(r, s)
+            site_dir = shlex.quote(f"{s['bench_path']}/sites/{domain}")
+            if r.run(f"test -d {site_dir}", as_user=BENCH_USER, stream=False)[0] == 0:
+                if r.run(f"test -f {site_dir}/site_config.json", as_user=BENCH_USER, stream=False)[0] == 0:
+                    raise RuntimeError(f"A working site named {domain} already exists on this server. "
+                                       "Refresh the server to import it instead of creating it.")
+                log(f"\n>>> Removing leftover folder from a failed earlier attempt for {domain}\n")
+                r.run(f"rm -rf {site_dir}", as_user=BENCH_USER, check=True, stream=False)
             log(f"\n>>> Creating site {domain} (a few minutes)\n")
             code, _ = r.run(_bench(s, f"bench new-site {shlex.quote(domain)} "
                                       f"--db-root-password {shlex.quote(security.decrypt(s['db_root_pw_enc']))} "
