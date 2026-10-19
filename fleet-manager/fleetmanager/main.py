@@ -11,21 +11,12 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import api_extra, config, cpanel, db, domains, jobs, ops, provision, security, ssh
+from .scheduler import Scheduler
+from . import api_extra, api_reliability, config, cpanel, db, domains, jobs, ops, provision, security, ssh
 from .access import audit, need, user
 
 STATIC = Path(__file__).parent / "static"
 _fails = {}  # ip -> (count, first_ts) for login throttling
-
-
-def _health_loop():
-    while True:
-        time.sleep(300)
-        for s in db.q("SELECT id FROM servers WHERE status='ready'"):
-            try:
-                provision.refresh_server(s["id"])
-            except Exception:
-                pass
 
 
 @asynccontextmanager
@@ -33,12 +24,13 @@ async def lifespan(app):
     db.init()
     ssh.manager_public_key()
     if not os.environ.get("FLEET_NO_BACKGROUND"):
-        threading.Thread(target=_health_loop, daemon=True).start()
+        Scheduler().start()
     yield
 
 
 app = FastAPI(title="ERP Fleet Manager", lifespan=lifespan)
 app.include_router(api_extra.router)
+app.include_router(api_reliability.router)
 
 
 # ------------------------------------------------------------------ auth

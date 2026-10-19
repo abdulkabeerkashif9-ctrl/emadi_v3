@@ -1,4 +1,7 @@
+import json
 import os
+import re
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -19,6 +22,9 @@ class FakeRunner:
     apps = ["erpnext"]
     sites = ["old.example.com"]
     redis_down = 0   # number of redis probes that fail
+    backups, offsite, written, relayed = {}, {}, {}, []
+    backup_fail = offsite_fail = restore_fail = False
+    tick = 0
     leftover = None  # None: no dir; 'failed': dir without site_config.json; 'real': working site
 
     def __init__(self, server, log=None):
@@ -27,13 +33,74 @@ class FakeRunner:
     def __enter__(self): return self
     def __exit__(self, *a): pass
     def close(self): pass
-    def write_file(self, path, content, mode=0o644): FakeRunner.calls.append(("write", path))
+    def write_file(self, path, content, mode=0o644):
+        FakeRunner.calls.append(("write", path)); FakeRunner.written[path] = (content, mode)
+
+    def sftp(self):
+        class F:
+            def __init__(f, path, mode): f.path, f.mode, f.done = path, mode, False
+            def __enter__(f): return f
+            def __exit__(f, *a): pass
+            def read(f, n):
+                if f.done or "b" not in f.mode or "w" in f.mode: return b""
+                f.done = True; return b"data:" + f.path.encode()
+            def write(f, data): FakeRunner.relayed.append((f.path, len(data)))
+        class S:
+            def open(s, path, mode="r"): return F(path, mode)
+            def close(s): pass
+        return S()
+
+    def _files(self, dom):
+        return FakeRunner.backups.setdefault(dom, [{"name": "20261018_100000-x-files.tar", "size": 4096, "mtime": 1792317601},
+                                                   {"name": "20261018_100000-x_database.sql.gz", "size": 2048, "mtime": 1792317600}])
+
+    def _rclone(self, cmd):
+        if "command -v rclone" in cmd: return 0, ""
+        if "rclone obscure" in cmd: return 0, "OBSCURED\n"
+        if "rcat" in cmd: return (1, "AccessDenied") if FakeRunner.offsite_fail else (0, "")
+        tok = shlex.split(cmd); sub = tok[3]
+        if sub == "lsjson":
+            dom = tok[4].rsplit("/", 1)[1]
+            if dom not in FakeRunner.offsite: return 3, "directory not found"
+            return 0, json.dumps([{"Name": f["name"], "Size": f["size"], "ModTime": "2027-01-01T00:00:00Z", "IsDir": False} for f in FakeRunner.offsite[dom]])
+        if sub == "copyto":
+            a, b = tok[4], tok[5]
+            if FakeRunner.offsite_fail: return 1, "AccessDenied"
+            if b.startswith("fm:"):
+                dom, name = b.split("/")[-2:]
+                src = next(f for f in FakeRunner.backups.get(dom, []) if f["name"] == name)
+                FakeRunner.offsite.setdefault(dom, []).append(dict(src))
+            else:
+                dom, name = a.split("/")[-2:]
+                self._files(dom).append(dict(next(f for f in FakeRunner.offsite[dom] if f["name"] == name)))
+            return 0, ""
+        if sub == "deletefile":
+            dom, name = tok[4].split("/")[-2:]
+            FakeRunner.offsite[dom] = [f for f in FakeRunner.offsite.get(dom, []) if f["name"] != name]
+            return 0, ""
+        return 0, ""
 
     def run(self, cmd, sudo=False, as_user=None, check=False, stream=True, timeout=0):
-        FakeRunner.calls.append(("run", cmd))
+        FakeRunner.calls.append(("run", cmd, self.s.get("name")))
         out = ""
-        if "private/backups" in cmd:
-            return 0, "20261018_100000-x_database.sql.gz|2048|1792317600\n20261018_100000-x-files.tar|4096|1792317601\nbad name|1|2\n"
+        dom = (re.search(r"sites/([A-Za-z0-9.\-]+)/private/backups", cmd) or [None, None])[1]
+        if "rm -f --" in cmd and dom:
+            names = set(shlex.split(cmd.split("rm -f --")[1]))
+            FakeRunner.backups[dom] = [f for f in self._files(dom) if f["name"] not in names]
+            return 0, ""
+        if "for f in *" in cmd and dom:
+            return 0, "".join(f"{f['name']}|{f['size']}|{f['mtime']}\n" for f in self._files(dom)) + "bad name|1|2\n"
+        if "backup --with-files" in cmd:
+            if FakeRunner.backup_fail: return 1, "disk full"
+            FakeRunner.tick += 1
+            d = re.search(r"--site (\S+)", cmd)[1].strip("'")
+            ts = f"20270101_{FakeRunner.tick:06d}"; u = d.replace(".", "_")
+            self._files(d).extend({"name": f"{ts}-{u}{suf}", "size": sz, "mtime": 1800000000 + FakeRunner.tick} for suf, sz in (("-database.sql.gz", 1000), ("-files.tar", 2000), ("-private-files.tar", 3000)))
+            return 0, ""
+        if cmd.startswith("rclone --config") or " | rclone " in cmd or "command -v rclone" in cmd:
+            return self._rclone(cmd)
+        if " restore " in cmd and "--force" in cmd:
+            return (1, "restore boom") if FakeRunner.restore_fail else (0, "")
         if cmd.startswith("tail -n") or " tail -n " in cmd:
             return 0, "2026-10-18 error line one\n2026-10-18 error line two\n"
         if "/dev/tcp/127.0.0.1/" in cmd:
@@ -56,7 +123,9 @@ class FakeRunner:
         elif "frappe.get_all" in cmd:
             out = "['Old Co']\n" if "--site old.example.com" in cmd else "[]\n"   # no Company until setup wizard
         elif "get-app" in cmd:
-            FakeRunner.apps.append(cmd.split("/")[-1].split()[0].replace("'", ""))
+            name = cmd.split("/")[-1].split()[0].replace("'", "")
+            if name not in FakeRunner.apps:
+                FakeRunner.apps.append(name)
         elif "drop-site" in cmd:
             d = cmd.split("drop-site ")[1].split()[0]
             if d in FakeRunner.sites:
@@ -80,6 +149,9 @@ def fake_ssh(monkeypatch):
     FakeRunner.calls, FakeRunner.apps, FakeRunner.sites = [], ["erpnext"], ["old.example.com"]
     FakeRunner.leftover = None
     FakeRunner.redis_down = 0
+    FakeRunner.backups, FakeRunner.offsite, FakeRunner.written, FakeRunner.relayed = {}, {}, {}, []
+    FakeRunner.backup_fail = FakeRunner.offsite_fail = FakeRunner.restore_fail = False
+    FakeRunner.tick = 0
     monkeypatch.setattr(ssh, "Runner", FakeRunner)
     monkeypatch.setattr(provision.ssh, "Runner", FakeRunner)
     monkeypatch.setattr(main.ssh, "Runner", FakeRunner)

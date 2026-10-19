@@ -98,18 +98,22 @@ def read_log(site_id, source, lines=300, query=""):
     return out[-200_000:]
 
 
-def list_backups(site_id):
-    site, s = get(site_id)
-    d = f"{s['bench_path']}/sites/{site['domain']}/private/backups"
-    with ssh.Runner(s) as r:
-        code, out = r.run(f"cd {shlex.quote(d)} 2>/dev/null && for f in *; do [ -f \"$f\" ] && echo \"$f|$(stat -c '%s|%Y' \"$f\")\"; done",
-                          as_user=BENCH_USER, stream=False)
+def backups_via(r, s, domain):
+    d = f"{s['bench_path']}/sites/{domain}/private/backups"
+    code, out = r.run(f"cd {shlex.quote(d)} 2>/dev/null && for f in *; do [ -f \"$f\" ] && echo \"$f|$(stat -c '%s|%Y' \"$f\")\"; done",
+                      as_user=BENCH_USER, stream=False)
     items = []
     for line in out.splitlines():
         parts = line.strip().split("|")
         if len(parts) == 3 and NAME_RE.match(parts[0]):
             items.append({"name": parts[0], "size": int(parts[1]), "mtime": int(parts[2])})
-    return sorted(items, key=lambda x: -x["mtime"])
+    return sorted(items, key=lambda x: (-x["mtime"], x["name"]))
+
+
+def list_backups(site_id):
+    site, s = get(site_id)
+    with ssh.Runner(s) as r:
+        return backups_via(r, s, site["domain"])
 
 
 def backup_path(site, s, name):
@@ -143,14 +147,9 @@ def _reload_nginx(r, s):
 
 
 # ------------------------------------------------------------ long actions (run as jobs)
-def backup_job(site_id, log):
-    site, s = get(site_id)
-    with ssh.Runner(s, log) as r:
-        log(f">>> Backing up {site['domain']} (database + files)\n")
-        code, _ = r.run(_site_cmd(s, site["domain"], "backup --with-files"), as_user=BENCH_USER)
-        if code != 0:
-            raise ssh.SSHError(f"bench backup failed (exit {code})")
-    log("\nBackup finished. Download it from the Backups tab.\n")
+def backup_job(site_id, log, trigger="manual"):
+    from . import backups
+    backups.run_backup(site_id, trigger, log)
 
 
 def migrate_job(site_id, log):

@@ -244,7 +244,12 @@ def approval_decide(aid: int, b: DecideIn, request: Request, u=Depends(need("adm
         db.x("UPDATE approvals SET status='rejected', decided_by=?, decided_at=datetime('now') WHERE id=?", (u["username"], aid))
         raise HTTPException(409, "The site no longer exists; the request was closed")
     params = json.loads(a["params"] or "{}")
-    job = _start_drop(a["site_id"], a["site_domain"], params.get("backup_first", True), f"{u['username']} (approved)")
+    by = f"{u['username']} (approved)"
+    if a["action"] == "restore_site":
+        from . import api_reliability
+        job = api_reliability._start_restore(a["site_id"], a["site_domain"], params["group"], params.get("source", "server"), by)
+    else:
+        job = _start_drop(a["site_id"], a["site_domain"], params.get("backup_first", True), by)
     db.x("UPDATE approvals SET status='approved', decided_by=?, decided_at=datetime('now'), job_id=? WHERE id=?", (u["username"], job, aid))
     audit(u, "approval_approved", a["site_domain"], f"request by {a['requested_by']}", request)
     return {"status": "approved", "job_id": job}

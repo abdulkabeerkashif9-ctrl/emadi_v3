@@ -157,6 +157,9 @@ class Runner:
             raise SSHError(f"Command failed (exit {code}): {full[:200]}")
         return code, text
 
+    def sftp(self):
+        return self.client.open_sftp()
+
     def write_file(self, path, content, mode=0o644):
         sftp = self.client.open_sftp()
         try:
