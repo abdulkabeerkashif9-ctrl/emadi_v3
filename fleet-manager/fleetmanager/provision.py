@@ -198,6 +198,7 @@ def configure_server(server_id, log):
 def collect_metrics(r):
     code, out = r.run(
         "echo LOAD $(cut -d' ' -f1 /proc/loadavg); echo CORES $(nproc); "
+        "echo INNER $(hostname -I | awk '{print $1}'); "
         "free -m | awk '/Mem:/{print \"MEM\",$2,$3}'; df -P / | awk 'NR==2{gsub(\"%\",\"\",$5); print \"DISK\",$5}'; "
         ". /etc/os-release; echo OS $PRETTY_NAME", stream=False)
     m = {}
@@ -217,6 +218,8 @@ def collect_metrics(r):
             m["disk_pct"] = int(v)
         elif k == "OS":
             m["os"] = v
+        elif k == "INNER":
+            m["inner_ip"] = v.strip()
     return m
 
 
@@ -486,6 +489,11 @@ def create_site(site_id, log, install_missing=True, add_dns=False, enable_ssl=Fa
         db.x("UPDATE sites SET status='up' WHERE id=?", (site_id,))
         check_sites(s["id"])
         log(f"\nSite ready: http://{domain}  (login: Administrator, password shown in the Sites page)\n")
+        if s.get("gateway"):
+            log("\nNEXT STEPS (provider gateway server):\n"
+                f"  1. DNS: A record {domain} -> {s['ip']}\n"
+                f"  2. In your provider panel add domain {domain} -> inner IP and port 80\n"
+                "  3. Open the site page in Fleet Manager and follow the Go-live checklist\n")
     except Exception:
         db.x("UPDATE sites SET status='error' WHERE id=?", (site_id,))
         raise

@@ -32,6 +32,10 @@ class FakeRunner:
     def run(self, cmd, sudo=False, as_user=None, check=False, stream=True, timeout=0):
         FakeRunner.calls.append(("run", cmd))
         out = ""
+        if "private/backups" in cmd:
+            return 0, "20261018_100000-x_database.sql.gz|2048|1792317600\n20261018_100000-x-files.tar|4096|1792317601\nbad name|1|2\n"
+        if cmd.startswith("tail -n") or " tail -n " in cmd:
+            return 0, "2026-10-18 error line one\n2026-10-18 error line two\n"
         if "/dev/tcp/127.0.0.1/" in cmd:
             if FakeRunner.redis_down > 0:
                 FakeRunner.redis_down -= 1
@@ -53,6 +57,10 @@ class FakeRunner:
             out = "['Old Co']\n" if "--site old.example.com" in cmd else "[]\n"   # no Company until setup wizard
         elif "get-app" in cmd:
             FakeRunner.apps.append(cmd.split("/")[-1].split()[0].replace("'", ""))
+        elif "drop-site" in cmd:
+            d = cmd.split("drop-site ")[1].split()[0]
+            if d in FakeRunner.sites:
+                FakeRunner.sites.remove(d)
         elif "bench new-site" in cmd:
             d = cmd.split("new-site ")[1].split()[0]
             FakeRunner.sites.append(d)

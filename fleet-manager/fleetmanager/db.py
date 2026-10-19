@@ -29,6 +29,18 @@ CREATE TABLE IF NOT EXISTS sites(
   id INTEGER PRIMARY KEY, server_id INTEGER NOT NULL, domain TEXT UNIQUE NOT NULL, company TEXT,
   apps TEXT DEFAULT '', admin_pw_enc TEXT, status TEXT DEFAULT 'creating', -- creating|up|down|error
   http_code INTEGER, checked_at TEXT, ssl INTEGER DEFAULT 0, created TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS audit(
+  id INTEGER PRIMARY KEY, ts TEXT DEFAULT CURRENT_TIMESTAMP, user TEXT, role TEXT, action TEXT,
+  target TEXT, detail TEXT, ip TEXT);
+CREATE INDEX IF NOT EXISTS audit_ts ON audit(id DESC);
+CREATE TABLE IF NOT EXISTS customers(
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, contact TEXT, email TEXT, phone TEXT, plan TEXT,
+  renews_on TEXT, notes TEXT, created TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS site_notes(
+  id INTEGER PRIMARY KEY, site_id INTEGER NOT NULL, user TEXT, text TEXT NOT NULL, ts TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS approvals(
+  id INTEGER PRIMARY KEY, ts TEXT DEFAULT CURRENT_TIMESTAMP, action TEXT, site_id INTEGER, site_domain TEXT,
+  params TEXT, requested_by TEXT, reason TEXT, status TEXT DEFAULT 'pending', decided_by TEXT, decided_at TEXT, job_id INTEGER);
 CREATE TABLE IF NOT EXISTS jobs(
   id INTEGER PRIMARY KEY, kind TEXT, title TEXT, status TEXT DEFAULT 'running', -- running|done|failed
   log TEXT DEFAULT '', created TEXT DEFAULT CURRENT_TIMESTAMP, finished TEXT);
@@ -81,10 +93,24 @@ def x(sql, args=()):
         return c.execute(sql, args).lastrowid
 
 
+# columns added after the first release: (table, column, DDL)
+MIGRATIONS = [
+    ("users", "role", "TEXT DEFAULT 'admin'"), ("users", "disabled", "INTEGER DEFAULT 0"),
+    ("servers", "gateway", "INTEGER DEFAULT 0"), ("servers", "gateway_url", "TEXT"),
+    ("sites", "golive_provider", "INTEGER DEFAULT 0"), ("sites", "customer_id", "INTEGER"),
+    ("sites", "suspended", "INTEGER DEFAULT 0"), ("sites", "aliases", "TEXT DEFAULT ''"),
+    ("sites", "public_ok", "INTEGER"), ("sites", "public_at", "TEXT"),
+    ("jobs", "user", "TEXT"),
+]
+
+
 def init():
     config.ensure_dirs()
     with conn() as c:
         c.executescript(SCHEMA)
+        for table, col, ddl in MIGRATIONS:
+            if col not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         for name, title, url, branch, req in BUILTIN_APPS:
             c.execute(
                 "INSERT OR IGNORE INTO apps(name,title,git_url,branch,requires,builtin) VALUES(?,?,?,?,?,1)",

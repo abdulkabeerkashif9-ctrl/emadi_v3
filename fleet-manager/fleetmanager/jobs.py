@@ -7,8 +7,8 @@ from . import db
 _lock = threading.Lock()
 
 
-def start(kind, title, fn):
-    job_id = db.x("INSERT INTO jobs(kind,title) VALUES(?,?)", (kind, title))
+def start(kind, title, fn, user=None):
+    job_id = db.x("INSERT INTO jobs(kind,title,user) VALUES(?,?,?)", (kind, title, user))
 
     def log(text):
         with _lock:
