@@ -257,3 +257,12 @@ tbody tr:first-child td:first-child{border-top-left-radius:10px}
 .btnrow{display:flex;gap:8px;flex-wrap:wrap}
 select.inl{width:auto;height:28px;font-size:13px;padding:0 8px}
 .pwbox{font-family:ui-monospace,Consolas,monospace;font-size:15px;background:var(--input);padding:10px 12px;border-radius:8px;word-break:break-all;margin:6px 0}
+
+/* ---------- monitoring & backups ---------- */
+.bars{display:flex;gap:2px;height:26px;align-items:stretch}
+.bars i{flex:1;min-width:2px;border-radius:2px;background:var(--line-2)}
+.bars i.ok{background:#2fa56b} .bars i.partial{background:#e0a030} .bars i.down{background:#d64545} .bars i.none{background:var(--line-2);opacity:.5}
+.inc{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--line)}
+.inc:first-of-type{border-top:0} .inc .b{flex:1;min-width:0}
+.btn.sm{white-space:nowrap}
+.count.warn{background:var(--red);color:#fff}

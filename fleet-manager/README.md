@@ -45,3 +45,21 @@ Overview (go-live checklist, customer), Operations (maintenance mode, clear cach
 ## Tests
 
 `pip install -r requirements.txt && pytest` — covers the API flow with a fake VPS and the SSH layer against an in-process SSH server. The provisioning scripts have **not** yet been run against a real VPS; do that first on your test VPS and report failures from the job log.
+
+## Backups, restore and moving sites
+
+**Backups** (support and up) shows every site's last backup, schedule and next run.
+
+- **Schedules**: a default schedule (daily/weekly/every N hours, with retention) applies to all sites; an admin can give a site its own. Old backups are pruned automatically (`keep` on the server, `keep_offsite` offsite).
+- **Offsite copy**: Settings → Backup storage takes any S3-compatible bucket (AWS, Backblaze B2, Wasabi, R2, MinIO…) or an SFTP server. Each VPS uploads directly with `rclone`, which is installed automatically on first use. Use **Test** to prove the credentials.
+- **Restore**: site → Backups → *Restore…* from the server or from offsite. You must give a reason and type the domain. A safety backup of the current state is taken first. Support staff send a request that an admin approves under Approvals.
+- **Move to another server** (admin): site → Operations. The site is backed up, copied through this computer to a server running the same ERPNext version, and restored there. The original stays untouched; then point DNS (and the provider panel) at the new server.
+
+## Monitoring and alerts
+
+**Monitoring** shows uptime (24 h / 7 d / 30 d), a 24-hour bar per site, server CPU/memory/disk, HTTPS certificate expiry and open incidents. Sites are checked from the public internet every minute, servers over SSH every 5 minutes.
+
+- An incident opens after 3 failed checks and closes after 2 good ones. Staff can **Acknowledge** or **Close** it; reminders repeat every 60 minutes.
+- Settings → Alerts: send alerts to **Telegram**, **email (SMTP)** and/or a **webhook** (Slack, Discord, Teams or a WhatsApp gateway). Thresholds and an optional **Auto-heal** (restart the server's services once per incident) are configured there.
+
+> Schedules, monitoring and alerts only run while Fleet Manager is running — keep it on a machine that is always on.

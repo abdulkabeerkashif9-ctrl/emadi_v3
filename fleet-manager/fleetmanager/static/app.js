@@ -160,6 +160,7 @@ document.addEventListener("keydown", e => {
 
 // ───────────────────────────── shell & routing ─────────────────────────────
 const NAV = [["sites", "Sites", "globe"], ["servers", "Servers", "server"], ["customers", "Customers", "building"], ["apps", "Apps", "box"], ["jobs", "Jobs", "activity"], ["-"],
+  ["monitoring", "Monitoring", "activity"], ["backups", "Backups", "drive", "support"],
   ["approvals", "Approvals", "clipboard", "support"], ["audit", "Audit log", "shield", "admin"], ["settings", "Settings", "settings"]];
 function buildShell() {
   $("#root").innerHTML = `<div class="app">
@@ -180,9 +181,10 @@ function paintPill() {
 function paintCounts() {
   const set = (k, n) => { const el = $("#cnt-" + k); if (el) { el.hidden = !n; el.textContent = n; } };
   set("sites", S.sites.length); set("servers", S.servers.length);
+  const mo = $("#cnt-monitoring"); if (mo) { mo.hidden = !S.incidentN; mo.textContent = S.incidentN; mo.classList.add("warn"); }
   const ap = $("#cnt-approvals"); if (ap) { ap.hidden = !S.pending; ap.textContent = S.pending; ap.classList.add("warn"); }
 }
-const AUTO = new Set(["sites", "site", "servers", "server", "jobs", "approvals"]);
+const AUTO = new Set(["monitoring", "sites", "site", "servers", "server", "jobs", "approvals"]);
 const NAVKEY = { site: "sites", newsite: "sites", server: "servers" };
 let seq = 0;
 async function route(silent = false) {
@@ -214,6 +216,7 @@ async function tick() {
   try {
     const jobs = await api("GET", "/api/jobs"), run = jobs.filter(j => j.status === "running").length, prev = S.running;
     S.jobs = jobs; S.running = run;
+    S.incidentN = (await api("GET", "/api/monitor/summary")).open;
     if (can("admin")) S.pending = (await api("GET", "/api/approvals?status=pending")).length;
     paintPill(); paintCounts();
     if (prev !== undefined && prev !== run) route(true);
@@ -307,6 +310,13 @@ const ACT = {
   },
   opdelete: el => deleteDialog(siteById(el.dataset.id)),
   delnote: el => busy(null, async () => { await api("DELETE", `/api/sites/${el.dataset.id}/notes/${el.dataset.n}`); route(true); }),
+  // ── backups & monitoring
+  incack: el => busy(el, async () => { await api("POST", `/api/incidents/${el.dataset.id}/ack`); toast("Acknowledged"); route(true); }),
+  incclose: el => busy(null, async () => { if (!await confirmBox("Close incident", "Mark this problem as handled? It reopens if it happens again.", "Close")) return; await api("POST", `/api/incidents/${el.dataset.id}/close`); route(true); }),
+  monrun: el => busy(el, async () => { await api("POST", "/api/monitor/run"); toast("Checks done"); route(true); }),
+  bkpolicy: el => busy(null, () => policyDialog(el.dataset.id ? +el.dataset.id : null)),
+  restore: el => restoreDialog(siteById(el.dataset.id), JSON.parse(el.dataset.g)),
+  opmove: el => moveDialog(siteById(el.dataset.id)),
   // ── customers, team, approvals
   newcustomer: () => customerForm(),
   editcustomer: el => customerForm(S.customers.find(c => c.id === +el.dataset.id)),
@@ -323,8 +333,9 @@ const ACT = {
     await api("DELETE", `/api/team/${encodeURIComponent(el.dataset.u)}`); route(true);
   }),
   approve: el => busy(null, async () => {
-    if (!await confirmBox("Approve deletion", `Delete <b>${esc(el.dataset.d)}</b> as requested? A backup is taken first if the requester asked for it.`, "Approve and delete", true)) return;
-    const r = await api("POST", `/api/approvals/${el.dataset.id}/decide`, { approve: true }); startJob(r.job_id, `Delete site ${el.dataset.d}`); route(true);
+    const rs = el.dataset.a === "restore_site";
+    if (!await confirmBox(rs ? "Approve restore" : "Approve deletion", rs ? `Replace the data of <b>${esc(el.dataset.d)}</b> with the requested backup? A safety backup of the current state is taken first.` : `Delete <b>${esc(el.dataset.d)}</b> as requested? A backup is taken first if the requester asked for it.`, rs ? "Approve and restore" : "Approve and delete", true)) return;
+    const r = await api("POST", `/api/approvals/${el.dataset.id}/decide`, { approve: true }); startJob(r.job_id, `${rs ? "Restore" : "Delete site"} ${el.dataset.d}`); route(true);
   }),
   reject: el => busy(el, async () => { await api("POST", `/api/approvals/${el.dataset.id}/decide`, { approve: false }); toast("Request rejected"); S.pending = Math.max(0, S.pending - 1); route(true); }),
 };
@@ -434,7 +445,7 @@ function siteOverview({ s, srv, running }) {
     html: `${running ? `<div class="note warn" style="display:flex;align-items:center;gap:12px"><span style="flex:1">This site is being set up…</span><button class="btn sm" data-act="runjob" data-q="${esc(s.domain)}">View progress</button></div>` : ""}
       ${s.suspended ? `<div class="note warn"><b>Suspended.</b> Visitors see the maintenance page. Reactivate it from the Operations tab.</div>` : ""}
       ${s.status === "error" && !running ? `<div class="note bad">This site is marked broken. See the Activity and Logs tabs, or press <b>Check health</b>.</div>` : ""}
-      <div id="golive"></div>
+      <div id="golive"></div><div id="uptime"></div>
       <div class="cards"><div class="card pad"><h3>Site information</h3><div class="kv">
         <div>Domain</div><div><span class="copy" data-act="copy" data-v="${esc(s.domain)}"><span class="mono">${esc(s.domain)}</span>${icon("copy")}</span></div>
         <div>Company</div><div>${esc(s.company || "—")}</div>
@@ -449,7 +460,7 @@ function siteOverview({ s, srv, running }) {
         ${can("support") ? actRow("Administrator login", "Open signed in, or view the password", `<div class="btnrow"><button class="btn sm" data-act="openadmin" data-id="${s.id}">Open</button><button class="btn sm" data-act="creds" data-id="${s.id}">${icon("key")}Password</button></div>`) : ""}
         ${can("support") ? actRow("Check health", "Request the site from this machine", `<button class="btn sm" data-act="health">${icon("refresh")}Check</button>`) : ""}</div></div>`,
     mount(root) {
-      loadGolive(root, s);
+      loadGolive(root, s); loadUptime(root, s);
       const sel = $("#custsel", root);
       if (sel) sel.onchange = () => busy(null, async () => { await api("PUT", `/api/sites/${s.id}/customer`, { customer_id: sel.value ? +sel.value : null }); toast("Customer updated"); route(true); });
     },
@@ -490,6 +501,7 @@ function siteOps({ s }) {
         ${actRow("Add a domain", "Serve this site on another domain too", b("opadddomain", "Add…"))}
         ${actRow(s.suspended ? "Reactivate site" : "Suspend site", s.suspended ? "Turns maintenance mode off" : "For unpaid or ended accounts: maintenance page on, with a note", b("opsuspend", s.suspended ? "Reactivate" : "Suspend…"))}</div></div>
       <div class="card pad dangerzone"><h3>Danger zone</h3>
+        ${can("admin") ? actRow("Move to another server", "Copies the site to a different server of the same ERPNext version", b("opmove", "Move…")) : ""}
         ${can("admin") ? actRow("Rename site", "Changes the site's domain. A backup is taken first.", b("oprename", "Rename…")) : ""}
         ${actRow("Delete site", can("admin") ? "Removes the site and database from the server" : "Needs an administrator's approval", b("opdelete", can("admin") ? "Delete…" : "Request deletion…", "danger"))}
         ${can("admin") ? actRow("Remove from Fleet Manager", "Only forgets the record here. The site stays on the server.", b("forget", "Remove", "danger")) : ""}</div>`,
@@ -498,17 +510,29 @@ function siteOps({ s }) {
 
 function siteBackups({ s }) {
   return {
-    html: `<div class="toolbar"><div style="flex:1" class="muted">Backups stored on the server for this site.</div><button class="btn primary" data-act="opbackup" data-id="${s.id}">${icon("plus")}Back up now</button></div><div class="card tbl" id="bk"><div class="empty faint">Loading…</div></div>`,
+    html: `<div class="toolbar"><div style="flex:1" class="muted" id="bkinfo">Backups of this site.</div>${can("admin") ? `<button class="btn" data-act="bkpolicy" data-id="${s.id}">Schedule…</button>` : ""}<button class="btn primary" data-act="opbackup" data-id="${s.id}">${icon("plus")}Back up now</button></div><div class="card tbl" id="bk"><div class="empty faint">Loading…</div></div>
+      <div class="card tbl" id="bkruns" style="margin-top:16px"></div>`,
     async mount(root) {
       const box = $("#bk", root);
-      try {
-        const items = await api("GET", `/api/sites/${s.id}/backups`);
-        if (!items.length) { box.innerHTML = emptyState("drive", "No backups yet", "Press Back up now to create the first one."); return; }
-        const groups = {}; items.forEach(i => (groups[i.name.slice(0, 15)] = groups[i.name.slice(0, 15)] || []).push(i));
-        const label = k => { const m = k.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/); return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`).toLocaleString() : k; };
-        box.innerHTML = `<table><thead><tr><th>Backup</th><th>Files</th></tr></thead><tbody>${Object.entries(groups).map(([k, fs]) => `<tr><td><div class="cell-main">${esc(label(k))}</div></td>
-          <td>${fs.map(f => `<div class="copyrow"><a class="btn sm" href="/api/sites/${s.id}/backups/${encodeURIComponent(f.name)}" download>${icon("download")}${esc(f.name.replace(/^\d{8}_\d{6}-/, ""))}</a><span class="faint">${fmtBytes(f.size)}</span></div>`).join("")}</td></tr>`).join("")}</tbody></table>`;
-      } catch (e) { box.innerHTML = `<div class="note bad" style="margin:12px">${esc(e.message)}</div>`; }
+      const [items, off, runs, pol] = await Promise.all([
+        api("GET", `/api/sites/${s.id}/backups`).catch(() => []),
+        api("GET", `/api/sites/${s.id}/offsite`).catch(() => null),
+        api("GET", `/api/sites/${s.id}/backup-runs`).catch(() => []),
+        api("GET", `/api/sites/${s.id}/backup-policy`).catch(() => null)]);
+      if (!box.isConnected) return;
+      if (pol) $("#bkinfo", root).textContent = `Schedule: ${policyText(pol)}${pol.enabled ? ` · keep ${pol.keep} on server${pol.offsite ? `, ${pol.keep_offsite} offsite` : ""}` : ""} (${pol.source === "site" ? "custom" : "default"})`;
+      const key = n => n.slice(0, 15), groups = {};
+      items.forEach(i => { const g = groups[key(i.name)] = groups[key(i.name)] || { id: key(i.name), files: [], server: true, offsite: false }; g.files.push(i); });
+      (off || []).forEach(i => { const g = groups[key(i.name)] = groups[key(i.name)] || { id: key(i.name), files: [], server: false, offsite: false }; g.offsite = true; });
+      const label = k => { const m = k.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/); return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`).toLocaleString() : k; };
+      const list = Object.values(groups).sort((x, y) => y.id.localeCompare(x.id));
+      if (!list.length) box.innerHTML = emptyState("drive", "No backups yet", "Press Back up now to create the first one.");
+      else box.innerHTML = `<table><thead><tr><th>Backup</th><th>Where</th><th class="hide-sm">Files</th><th></th></tr></thead><tbody>${list.map(g => { g.label = label(g.id); return `<tr><td><div class="cell-main">${esc(g.label)}</div></td>
+        <td>${g.server ? '<span class="chip">Server</span> ' : ""}${g.offsite ? '<span class="chip info">Offsite</span>' : ""}</td>
+        <td class="hide-sm">${g.files.map(f => `<div class="copyrow"><a class="btn sm" href="/api/sites/${s.id}/backups/${encodeURIComponent(f.name)}" download>${icon("download")}${esc(f.name.replace(/^\d{8}_\d{6}-/, ""))}</a><span class="faint">${fmtBytes(f.size)}</span></div>`).join("") || '<span class="faint">only offsite</span>'}</td>
+        <td style="text-align:right;white-space:nowrap">${can("support") ? `<button class="btn sm" data-act="restore" data-id="${s.id}" data-g="${esc(JSON.stringify({ id: g.id, label: g.label, server: g.server, offsite: g.offsite }))}">${can("admin") ? "Restore…" : "Request restore…"}</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`;
+      if (off === null) box.insertAdjacentHTML("afterend", `<p class="hint">Offsite copies could not be listed (not configured or unreachable).</p>`);
+      $("#bkruns", root).innerHTML = runs.length ? `<table><thead><tr><th>Recent runs</th><th>Result</th><th class="hide-sm">Size</th><th>When</th></tr></thead><tbody>${runs.slice(0, 10).map(r => `<tr><td class="faint">${esc(r.trigger)}</td><td>${runChip(r)} ${offChip(r)}${r.status === "failed" ? `<div class="cell-sub">${esc(r.message)}</div>` : ""}</td><td class="hide-sm faint">${r.size_bytes ? fmtBytes(r.size_bytes) : "—"}</td><td class="faint">${ago(r.started)}</td></tr>`).join("")}</tbody></table>` : "";
     },
   };
 }
@@ -921,8 +945,8 @@ async function pApprovals() {
   return {
     crumbs: [["Approvals"]],
     html: `<div class="page-head"><h1>Approvals</h1></div><p class="sub">${can("admin") ? "Dangerous actions requested by support staff wait here for your decision." : "Your requests for actions that need an administrator."}</p>
-      <div class="card tbl">${rows.length ? `<table><thead><tr><th>Request</th><th class="hide-sm">By</th><th class="hide-sm">Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td><div class="cell-main">Delete ${esc(r.site_domain)}</div><div class="cell-sub">${ago(r.ts)}</div></td><td class="hide-sm">${esc(r.requested_by)}</td><td class="hide-sm">${esc(r.reason || "—")}</td><td>${st(r)}${r.decided_by ? `<div class="cell-sub">by ${esc(r.decided_by)}</div>` : ""}</td>
-        <td style="text-align:right;white-space:nowrap">${r.status === "pending" && can("admin") ? `<button class="btn sm danger" data-act="approve" data-id="${r.id}" data-d="${esc(r.site_domain)}">Approve…</button> <button class="btn sm" data-act="reject" data-id="${r.id}">Reject</button>` : ""}</td></tr>`).join("")}</tbody></table>` : emptyState("clipboard", "Nothing waiting", "Requests that need an administrator will appear here.")}</div>`,
+      <div class="card tbl">${rows.length ? `<table><thead><tr><th>Request</th><th class="hide-sm">By</th><th class="hide-sm">Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td><div class="cell-main">${r.action === "restore_site" ? "Restore" : "Delete"} ${esc(r.site_domain)}</div>${r.action === "restore_site" ? `<div class="cell-sub">backup ${esc((JSON.parse(r.params || "{}")).group || "")} from ${esc((JSON.parse(r.params || "{}")).source || "")}</div>` : ""}<div class="cell-sub">${ago(r.ts)}</div></td><td class="hide-sm">${esc(r.requested_by)}</td><td class="hide-sm">${esc(r.reason || "—")}</td><td>${st(r)}${r.decided_by ? `<div class="cell-sub">by ${esc(r.decided_by)}</div>` : ""}</td>
+        <td style="text-align:right;white-space:nowrap">${r.status === "pending" && can("admin") ? `<button class="btn sm danger" data-act="approve" data-id="${r.id}" data-d="${esc(r.site_domain)}" data-a="${esc(r.action)}">Approve…</button> <button class="btn sm" data-act="reject" data-id="${r.id}">Reject</button>` : ""}</td></tr>`).join("")}</tbody></table>` : emptyState("clipboard", "Nothing waiting", "Requests that need an administrator will appear here.")}</div>`,
   };
 }
 
@@ -952,7 +976,7 @@ async function pAudit() {
 }
 
 async function pSettings(tab = "account") {
-  const tabs = [["account", "Account"], ...(can("admin") ? [["team", "Team"], ["integrations", "Integrations"]] : [])];
+  const tabs = [["account", "Account"], ...(can("admin") ? [["team", "Team"], ["integrations", "Integrations"], ["storage", "Backup storage"], ["alerts", "Alerts"]] : [])];
   if (!tabs.some(t => t[0] === tab)) tab = "account";
   let body = { html: "" };
   if (tab === "account") {
@@ -974,6 +998,10 @@ async function pSettings(tab = "account") {
         <p class="hint">${Object.entries(ROLE_TXT).map(([k, v]) => `<b style="text-transform:capitalize">${k}</b>: ${esc(v)}`).join(" · ")}</p>`,
       mount(root) { $$("[data-role]", root).forEach(sel => { sel.onchange = () => busy(null, async () => { await api("PUT", `/api/team/${encodeURIComponent(sel.dataset.role)}`, { role: sel.value }); toast("Role updated"); route(); }); }); },
     };
+  } else if (tab === "storage") {
+    body = await setStorage();
+  } else if (tab === "alerts") {
+    body = await setAlerts();
   } else {
     const [c, k] = await Promise.all([api("GET", "/api/settings/cpanel"), api("GET", "/api/manager-key")]);
     body = {
@@ -998,11 +1026,219 @@ async function pSettings(tab = "account") {
   };
 }
 
+// ───────────────────────────── monitoring ─────────────────────────────
+const barsHtml = a => `<div class="bars" role="img" aria-label="Last 24 hours">${a.map(s => `<i class="${s}"></i>`).join("")}</div>`;
+const pct = v => v == null ? "—" : (v >= 99.995 ? "100%" : v.toFixed(2) + "%");
+const sevBadge = s => s === "crit" ? '<span class="badge red"><i></i>Critical</span>' : '<span class="badge amber"><i></i>Warning</span>';
+const incLink = i => i.target_type === "site" ? `#/sites/${i.target_id}` : `#/servers/${i.target_id}`;
+
+function incidentRow(i, canAct) {
+  return `<div class="inc ${i.severity}"><div class="b"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${sevBadge(i.severity)}<b>${esc(i.title)}</b><a href="${incLink(i)}" style="text-decoration:underline" class="muted">${esc(i.target_name)}</a></div>
+    <div class="muted" style="margin-top:4px;white-space:pre-wrap">${esc(i.detail || "")}</div>
+    <div class="cell-sub">Opened ${ago(i.opened_at)}${i.acked_by ? ` · acknowledged by ${esc(i.acked_by)}` : ""}${i.status === "resolved" ? ` · resolved ${ago(i.resolved_at)}${i.resolved_by && i.resolved_by !== "auto" ? ` by ${esc(i.resolved_by)}` : ""}` : ""}</div></div>
+    ${canAct && i.status === "open" && can("support") ? `<div class="btnrow">${i.acked_by ? "" : `<button class="btn sm" data-act="incack" data-id="${i.id}">Acknowledge</button>`}<button class="btn sm" data-act="incclose" data-id="${i.id}">Close</button></div>` : ""}</div>`;
+}
+
+async function pMonitoring() {
+  const [sum, open, done] = await Promise.all([api("GET", "/api/monitor/summary"), api("GET", "/api/incidents?status=open"), api("GET", "/api/incidents?status=resolved&limit=10")]);
+  S.incidents = open;
+  const upN = sum.sites.filter(s => s.status === "up").length;
+  const worst = sum.sites.map(s => s.uptime24).filter(v => v != null);
+  const tile = (k, v, sub) => `<div class="card tile"><div class="k">${k}</div><div class="v">${v}</div><div class="cell-sub">${sub || ""}</div></div>`;
+  return {
+    crumbs: [["Monitoring"]],
+    actions: can("support") ? `<button class="btn" data-act="monrun">${icon("refresh")}Check now</button>` : "",
+    html: `<div class="page-head"><h1>Monitoring</h1></div><p class="sub">Uptime, server health and open problems. Checks run every minute while Fleet Manager is running.</p>
+      <div class="tiles">${tile("Sites up", `${upN}<span class="faint" style="font-size:15px"> / ${sum.sites.length}</span>`, sum.sites.length - upN ? `${sum.sites.length - upN} down` : "all responding")}
+        ${tile("Open incidents", sum.open, sum.critical ? `${sum.critical} critical` : sum.open ? "warnings only" : "all clear")}
+        ${tile("Worst uptime (24 h)", worst.length ? pct(Math.min(...worst)) : "—", "across all sites")}
+        ${tile("Servers", sum.servers.length, "being watched")}</div>
+      <div class="card pad" style="margin-bottom:16px"><h3>Open incidents</h3>${open.length ? open.map(i => incidentRow(i, true)).join("") : `<div class="muted">${icon("check")} Nothing needs attention.</div>`}</div>
+      <div class="card tbl" style="margin-bottom:16px"><table><thead><tr><th>Site</th><th class="hide-sm">Last 24 hours</th><th>Uptime 24 h</th><th class="hide-sm">7 d</th><th class="hide-sm">30 d</th><th class="hide-sm">Speed</th><th class="hide-sm">HTTPS expires</th></tr></thead><tbody>
+      ${sum.sites.length ? sum.sites.map(s => `<tr data-href="#/sites/${s.id}" tabindex="0"><td><div class="cell-main">${esc(s.domain)}</div><div class="cell-sub">${esc(s.server_name)}${s.suspended ? " · suspended" : ""}</div></td><td class="hide-sm" style="min-width:200px">${barsHtml(s.bars)}</td>
+        <td>${badge(s.status)} <b style="margin-left:4px">${pct(s.uptime24)}</b></td><td class="hide-sm">${pct(s.uptime7)}</td><td class="hide-sm">${pct(s.uptime30)}</td><td class="hide-sm faint">${s.ms != null ? s.ms + " ms" : "—"}</td><td class="hide-sm faint">${esc(s.ssl_expires || "—")}</td></tr>`).join("") : `<tr><td colspan="7">${emptyState("globe", "No sites to watch", "Sites you create appear here automatically.")}</td></tr>`}</tbody></table></div>
+      <div class="card tbl" style="margin-bottom:16px"><table><thead><tr><th>Server</th><th>CPU</th><th>Memory</th><th>Disk</th><th class="hide-sm">Memory trend</th><th class="hide-sm">Updated</th></tr></thead><tbody>
+      ${sum.servers.map(v => { const cpu = v.cores ? Math.round(100 * v.load / v.cores) : 0; const mini = p => `<div class="mini"><span>${p ?? "—"}%</span>${meter(p || 0)}</div>`;
+        return `<tr data-href="#/servers/${v.id}" tabindex="0"><td class="cell-main">${esc(v.name)}</td><td><div class="mini"><span>${cpu}%</span>${meter(cpu)}</div></td><td>${mini(v.mem_pct)}</td><td>${mini(v.disk_pct)}</td><td class="hide-sm">${sparkHtml(v.mem_spark)}</td><td class="hide-sm faint">${ago(v.metrics_at)}</td></tr>`; }).join("") || `<tr><td colspan="6" class="faint" style="padding:20px">No ready servers.</td></tr>`}</tbody></table></div>
+      ${done.length ? `<div class="card pad"><h3>Recently resolved</h3>${done.map(i => incidentRow(i, false)).join("")}</div>` : ""}`,
+  };
+}
+const sparkHtml = a => { if (!a || a.length < 2) return '<span class="faint">collecting…</span>'; const w = 120, h = 28, pts = a.map((v, i) => `${(i / (a.length - 1) * w).toFixed(1)},${(h - (Math.min(100, v) / 100) * h).toFixed(1)}`).join(" "); return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".7"/></svg>`; };
+
+async function loadUptime(root, s) {
+  const box = $("#uptime", root); if (!box) return;
+  let u; try { u = await api("GET", `/api/sites/${s.id}/uptime`); } catch { return; }
+  if (!box.isConnected) return;
+  const cell = (k, v) => `<div><div class="faint" style="font-size:12.5px">${k}</div><div style="font-size:18px;font-weight:600">${pct(v)}</div></div>`;
+  box.innerHTML = `<div class="card pad" style="margin-bottom:16px"><h3 style="display:flex;align-items:center"><span style="flex:1">Uptime</span><a href="#/monitoring" class="muted" style="font-weight:400;text-decoration:underline">Monitoring</a></h3>
+    ${barsHtml(u.bars)}<div class="btnrow" style="gap:28px;margin:12px 0 0">${cell("24 hours", u.uptime24)}${cell("7 days", u.uptime7)}${cell("30 days", u.uptime30)}${u.ssl_expires ? cell("HTTPS expires", null).replace("—", esc(u.ssl_expires)) : ""}</div>
+    ${u.incidents.length ? `<div style="margin-top:14px">${u.incidents.slice(0, 3).map(i => incidentRow(i, true)).join("")}</div>` : ""}</div>`;
+}
+
+// ───────────────────────────── backups ─────────────────────────────
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const pad2 = n => String(n).padStart(2, "0");
+const policyText = p => !p.enabled ? "Off" : p.frequency === "daily" ? `Daily at ${pad2(p.hour)}:00` : p.frequency === "weekly" ? `${DAYS[p.weekday]}s at ${pad2(p.hour)}:00` : `Every ${p.interval_hours} h`;
+const runChip = r => !r ? '<span class="faint">never</span>' : r.status === "ok" ? `<span class="chip ok">OK</span>` : r.status === "failed" ? `<span class="chip bad" title="${esc(r.message)}">Failed</span>` : '<span class="chip warn">Running</span>';
+const offChip = r => !r || !r.offsite_status ? "" : r.offsite_status === "ok" ? '<span class="chip info" title="Copied to offsite storage">Offsite ✓</span>' : r.offsite_status.startsWith("skipped") ? '<span class="chip">Offsite skipped</span>' : `<span class="chip bad" title="${esc(r.offsite_status)}">Offsite failed</span>`;
+
+async function pBackups() {
+  const o = await api("GET", "/api/backups");
+  S.bk = o;
+  const dest = o.destination;
+  const failed = o.sites.filter(s => s.last && s.last.status === "failed").length;
+  return {
+    crumbs: [["Backups"]], actions: "",
+    html: `<div class="page-head"><h1>Backups</h1></div><p class="sub">Automatic backups, retention and offsite copies for every site.</p>
+      ${failed ? `<div class="note bad">${icon("alert")} ${failed} site${failed > 1 ? "s have" : " has"} a failed latest backup.</div>` : ""}
+      <div class="cards"><div class="card pad"><h3>Default schedule</h3><div style="font-size:18px;font-weight:600">${esc(policyText(o.default))}</div>
+        <p class="muted" style="margin:6px 0 12px">Keep the newest ${o.default.keep} backups on the server${o.default.offsite ? `, and ${o.default.keep_offsite} offsite` : ""}. Applies to every site without its own schedule.</p>
+        ${can("admin") ? `<button class="btn sm" data-act="bkpolicy" data-id="">Change…</button>` : ""}</div>
+        <div class="card pad"><h3>Offsite storage</h3>${dest.configured ? `<div style="font-size:18px;font-weight:600">${dest.type === "s3" ? "S3-compatible" : "SFTP"} <span class="faint" style="font-weight:400;font-size:14px">${esc(dest.type === "s3" ? dest.path : dest.host + ":" + dest.path)}</span></div><p class="muted" style="margin:6px 0 12px">Copies go straight from each server to the storage.</p>` : `<div style="font-size:16px;font-weight:600">Not configured</div><p class="muted" style="margin:6px 0 12px">A copy outside the server protects you if the VPS itself is lost.</p>`}
+        ${can("admin") ? `<a class="btn sm" href="#/settings/storage">${dest.configured ? "Manage" : "Set up"}</a>` : ""}</div></div>
+      <div class="card tbl" style="margin-bottom:16px"><table><thead><tr><th>Site</th><th>Last backup</th><th class="hide-sm">Schedule</th><th class="hide-sm">Next run</th><th></th></tr></thead><tbody>
+      ${o.sites.length ? o.sites.map(s => `<tr><td><a href="#/sites/${s.id}/backups"><div class="cell-main">${esc(s.domain)}</div></a><div class="cell-sub">${esc(s.server_name)}</div></td>
+        <td>${runChip(s.last)} ${offChip(s.last)}<div class="cell-sub">${s.last_ok ? `last good ${ago(s.last_ok.started)}${s.last_ok.size_bytes ? " · " + fmtBytes(s.last_ok.size_bytes) : ""}` : "no good backup yet"}</div></td>
+        <td class="hide-sm">${esc(policyText(s.policy))}<div class="cell-sub">${s.policy.source === "site" ? "custom" : "default"}</div></td>
+        <td class="hide-sm faint">${s.next_run ? (new Date(s.next_run) <= new Date() ? "due now" : new Date(s.next_run).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })) : "—"}</td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn sm" data-act="opbackup" data-id="${s.id}">Back up now</button>${can("admin") ? ` <button class="btn sm" data-act="bkpolicy" data-id="${s.id}">Schedule…</button>` : ""}</td></tr>`).join("")
+        : `<tr><td colspan="5">${emptyState("drive", "No sites yet", "Backups start automatically once a site exists.")}</td></tr>`}</tbody></table></div>
+      <div class="card tbl"><table><thead><tr><th>Recent runs</th><th>Result</th><th class="hide-sm">Size</th><th class="hide-sm">Trigger</th><th>When</th></tr></thead><tbody>
+      ${o.runs.length ? o.runs.map(r => `<tr><td>${esc(r.domain)}</td><td>${runChip(r)} ${offChip(r)}${r.status === "failed" ? `<div class="cell-sub" style="max-width:360px">${esc(r.message)}</div>` : ""}</td><td class="hide-sm faint">${r.size_bytes ? fmtBytes(r.size_bytes) : "—"}</td><td class="hide-sm faint">${esc(r.trigger)}</td><td class="faint">${ago(r.started)}</td></tr>`).join("") : `<tr><td colspan="5" class="faint" style="padding:20px">No backups have run yet.</td></tr>`}</tbody></table></div>
+      <p class="hint">Schedule times use the clock of the computer running Fleet Manager (${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}). Backups only run while Fleet Manager is running.</p>`,
+  };
+}
+
+async function policyDialog(siteId) {
+  const site = siteId ? siteById(siteId) : null;
+  const p = siteId ? await api("GET", `/api/sites/${siteId}/backup-policy`) : S.bk.default;
+  const d = dialog(site ? `Backup schedule — ${site.domain}` : "Default backup schedule", `<form id="f">
+    <label class="check" style="padding-top:0"><input type="checkbox" name="enabled" ${p.enabled ? "checked" : ""}><div><b>Automatic backups</b></div></label>
+    <div class="row2"><div><label class="l">Repeat</label><select name="frequency"><option value="daily" ${p.frequency === "daily" ? "selected" : ""}>Every day</option><option value="weekly" ${p.frequency === "weekly" ? "selected" : ""}>Every week</option><option value="hours" ${p.frequency === "hours" ? "selected" : ""}>Every few hours</option></select></div>
+      <div id="r-hour"><label class="l">At</label><select name="hour">${[...Array(24).keys()].map(h => `<option value="${h}" ${p.hour === h ? "selected" : ""}>${pad2(h)}:00</option>`).join("")}</select></div>
+      <div id="r-int" hidden><label class="l">Every (hours)</label><input name="interval_hours" type="number" min="1" max="168" value="${p.interval_hours}"></div></div>
+    <div id="r-day" ${p.frequency === "weekly" ? "" : "hidden"}><label class="l">Day</label><select name="weekday">${DAYS.map((n, i) => `<option value="${i}" ${p.weekday === i ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+    <div class="row2"><div><label class="l">Keep on server</label><input name="keep" type="number" min="1" max="60" value="${p.keep}"></div><div><label class="l">Keep offsite</label><input name="keep_offsite" type="number" min="1" max="365" value="${p.keep_offsite}"></div></div>
+    <label class="check"><input type="checkbox" name="offsite" ${p.offsite ? "checked" : ""}><div><b>Also copy offsite</b><div class="hint">Needs offsite storage in Settings → Storage.</div></div></label></form>`,
+    `${site && p.source === "site" ? `<button class="btn" id="inh" style="margin-right:auto">Use default</button>` : ""}<button class="btn" data-close>Cancel</button><button class="btn primary" id="save">Save</button>`);
+  const f = $("#f", d), sync = () => { const v = f.frequency.value; $("#r-day", d).hidden = v !== "weekly"; $("#r-int", d).hidden = v !== "hours"; $("#r-hour", d).hidden = v === "hours"; };
+  f.frequency.onchange = sync; sync();
+  $("#save", d).onclick = e => busy(e.currentTarget, async () => {
+    const x = { enabled: f.enabled.checked, frequency: f.frequency.value, hour: +f.hour.value, weekday: +f.weekday.value, interval_hours: +f.interval_hours.value, keep: +f.keep.value, keep_offsite: +f.keep_offsite.value, offsite: f.offsite.checked };
+    await api("PUT", siteId ? `/api/sites/${siteId}/backup-policy` : "/api/backups/policy", x); d.close(); toast("Schedule saved"); route();
+  });
+  const inh = $("#inh", d); if (inh) inh.onclick = () => busy(inh, async () => { await api("DELETE", `/api/sites/${siteId}/backup-policy`); d.close(); toast("Using the default schedule"); route(); });
+}
+
+function restoreDialog(s, g) {
+  const admin = can("admin"), both = g.server && g.offsite;
+  const d = dialog(admin ? "Restore backup" : "Request a restore", `<div class="note warn" style="margin-top:0">This <b>replaces the current data</b> of ${esc(s.domain)} with the backup from <b>${esc(g.label)}</b>. A safety backup of the current state is taken first. ${admin ? "" : "An administrator must approve this request."}</div>
+    ${both ? `<label class="l">Restore from</label><select id="src"><option value="server">The server</option><option value="offsite">Offsite storage</option></select>` : `<input type="hidden" id="src" value="${g.server ? "server" : "offsite"}">`}
+    <label class="l">Reason</label><textarea id="why" rows="2" placeholder="Why is this restore needed?"></textarea>
+    <label class="l">Type <b>${esc(s.domain)}</b> to confirm</label><input id="cf" autocomplete="off" spellcheck="false">`,
+    `<button class="btn" data-close>Cancel</button><button class="btn danger" id="go" disabled>${admin ? "Restore" : "Send request"}</button>`, { noFocus: true });
+  const ok = () => { $("#go", d).disabled = !($("#why", d).value.trim().length >= 3 && $("#cf", d).value.trim().toLowerCase() === s.domain); };
+  $("#why", d).oninput = ok; $("#cf", d).oninput = ok;
+  $("#go", d).onclick = e => busy(e.currentTarget, async () => {
+    const r = await api("POST", `/api/sites/${s.id}/restore`, { group: g.id, source: $("#src", d).value, reason: $("#why", d).value.trim(), confirm: $("#cf", d).value.trim() });
+    d.close();
+    if (r.pending) { toast("Request sent. An administrator will review it."); return; }
+    startJob(r.job_id, `Restore ${s.domain}`);
+  });
+}
+
+function moveDialog(s) {
+  const targets = S.servers.filter(v => v.status === "ready" && v.id !== s.server_id && v.version === (S.servers.find(x => x.id === s.server_id) || {}).version);
+  const d = dialog("Move to another server", targets.length ? `<div class="note warn" style="margin-top:0">The site is backed up, copied to the new server (through this computer) and restored there. The original stays untouched on <b>${esc(s.server_name)}</b>. Afterwards point DNS${s.gateway ? " and the provider panel" : ""} to the new server.</div>
+    <label class="l">New server</label><select id="tg">${targets.map(v => `<option value="${v.id}">${esc(v.name)} — ${esc(v.ip)}</option>`).join("")}</select>
+    <label class="l">Type <b>${esc(s.domain)}</b> to confirm</label><input id="cf" autocomplete="off" spellcheck="false">` : `<p class="muted">No other ready server runs the same ERPNext version (${esc(ver((S.servers.find(x => x.id === s.server_id) || {}).version))}).</p>`,
+    targets.length ? `<button class="btn" data-close>Cancel</button><button class="btn primary" id="go" disabled>Start move</button>` : `<button class="btn primary" data-close>OK</button>`, { noFocus: !targets.length });
+  if (!targets.length) return;
+  $("#cf", d).oninput = () => { $("#go", d).disabled = $("#cf", d).value.trim().toLowerCase() !== s.domain; };
+  $("#go", d).onclick = e => busy(e.currentTarget, async () => { const r = await api("POST", `/api/sites/${s.id}/move`, { server_id: +$("#tg", d).value, confirm: $("#cf", d).value.trim() }); d.close(); startJob(r.job_id, `Move ${s.domain}`); });
+}
+
+// ───────────────────────────── settings: storage, alerts ─────────────────────────────
+async function setStorage() {
+  const d = await api("GET", "/api/backups/destination");
+  const t = d.type || "s3", v = k => esc(d[k] ?? "");
+  return {
+    html: `<div class="card pad" style="max-width:720px"><h3>Offsite backup storage</h3>
+      <p class="muted" style="margin:0 0 12px">Each server uploads its backups straight to this storage, so a copy survives even if the VPS is lost. Works with any S3-compatible service (AWS S3, Backblaze B2, Wasabi, Cloudflare R2, MinIO …) or an SFTP server.</p>
+      <form id="f"><label class="l">Type</label><select name="type"><option value="s3" ${t === "s3" ? "selected" : ""}>S3-compatible</option><option value="sftp" ${t === "sftp" ? "selected" : ""}>SFTP server</option></select>
+      <div id="s3"><div class="row2"><div><label class="l">Provider</label><select name="provider">${["AWS", "Backblaze", "Wasabi", "Cloudflare", "Minio", "Other"].map(p => `<option ${d.provider === p ? "selected" : ""}>${p}</option>`).join("")}</select></div><div><label class="l">Region <span class="faint">(optional)</span></label><input name="region" value="${v("region")}" placeholder="us-east-1"></div></div>
+        <label class="l">Endpoint <span class="faint">(blank for AWS)</span></label><input name="endpoint" value="${v("endpoint")}" placeholder="https://s3.eu-central-003.backblazeb2.com">
+        <div class="row2"><div><label class="l">Access key</label><input name="access_key" value="${v("access_key")}" autocomplete="off"></div><div><label class="l">Secret key ${d.has_secret ? '<span class="faint">(saved — blank keeps it)</span>' : ""}</label><input name="secret_key" type="password" autocomplete="new-password"></div></div>
+        <label class="l">Bucket and folder</label><input name="path_s3" value="${t === "s3" ? v("path") : ""}" placeholder="my-bucket/fleet-backups"></div>
+      <div id="sf"><div class="row2"><div><label class="l">Host</label><input name="host" value="${v("host")}" placeholder="backup.example.com"></div><div><label class="l">Port</label><input name="port" type="number" value="${d.port || 22}"></div></div>
+        <div class="row2"><div><label class="l">User</label><input name="user" value="${v("user")}" autocomplete="off"></div><div><label class="l">Password ${d.has_secret ? '<span class="faint">(saved — blank keeps it)</span>' : ""}</label><input name="password" type="password" autocomplete="new-password"></div></div>
+        <label class="l">Folder</label><input name="path_sf" value="${t === "sftp" ? v("path") : ""}" placeholder="/backups/fleet"></div>
+      <div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" id="save">Save</button><button type="button" class="btn" id="test" ${d.configured ? "" : "disabled"}>Test</button>${d.configured ? '<button type="button" class="btn danger" id="rm" style="margin-left:auto">Remove</button>' : ""}</div></form>
+      <p class="hint">“Test” uploads and deletes a tiny file from a ready server. The first offsite copy installs <span class="mono">rclone</span> on that server automatically.</p></div>`,
+    mount(root) {
+      const f = $("#f", root), sync = () => { $("#s3", root).hidden = f.type.value !== "s3"; $("#sf", root).hidden = f.type.value !== "sftp"; };
+      f.type.onchange = sync; sync();
+      f.onsubmit = e => { e.preventDefault(); busy($("#save", root), async () => {
+        const x = Object.fromEntries(new FormData(f)), s3 = x.type === "s3";
+        const body = { type: x.type, path: (s3 ? x.path_s3 : x.path_sf).trim(), provider: x.provider, endpoint: x.endpoint.trim(), region: x.region.trim(), access_key: x.access_key.trim(), secret_key: x.secret_key, host: x.host.trim(), port: +x.port || 22, user: x.user.trim(), password: x.password };
+        await api("PUT", "/api/backups/destination", body); toast("Saved"); route();
+      }); };
+      $("#test", root).onclick = e => busy(e.currentTarget, async () => { const r = await api("POST", "/api/backups/destination/test"); toast(`Works — tested from ${r.server}`); });
+      const rm = $("#rm", root); if (rm) rm.onclick = () => busy(null, async () => { if (!await confirmBox("Remove offsite storage", "Existing copies stay where they are, but new backups will no longer be copied offsite.", "Remove", true)) return; await api("DELETE", "/api/backups/destination"); route(); });
+    },
+  };
+}
+
+async function setAlerts() {
+  const [n, m] = await Promise.all([api("GET", "/api/notify"), api("GET", "/api/monitor/settings")]);
+  const tg = n.telegram, em = n.email, wh = n.webhook;
+  const num = (k, l, h) => `<div><label class="l">${l}</label><input name="${k}" type="number" step="any" value="${m[k]}">${h ? `<div class="hint">${h}</div>` : ""}</div>`;
+  return {
+    html: `<div class="cards"><div class="card pad"><h3>Where alerts go</h3><form id="nf">
+        <label class="check" style="padding-top:0"><input type="checkbox" name="tg_on" ${tg.enabled ? "checked" : ""}><div><b>Telegram</b><div class="hint">Create a bot with @BotFather, add it to your team chat, then paste its token and the chat id.</div></div></label>
+        <div class="row2"><div><label class="l">Bot token ${tg.has_token ? '<span class="faint">(saved)</span>' : ""}</label><input name="tg_token" type="password" autocomplete="new-password"></div><div><label class="l">Chat id</label><input name="tg_chat" value="${esc(tg.chat_id)}" autocomplete="off"></div></div>
+        <label class="check"><input type="checkbox" name="em_on" ${em.enabled ? "checked" : ""}><div><b>Email (SMTP)</b></div></label>
+        <div class="row2"><div><label class="l">SMTP host</label><input name="em_host" value="${esc(em.host)}" placeholder="smtp.gmail.com"></div><div><label class="l">Port</label><input name="em_port" type="number" value="${em.port || 587}"></div></div>
+        <div class="row2"><div><label class="l">User</label><input name="em_user" value="${esc(em.user)}" autocomplete="off"></div><div><label class="l">Password ${em.has_password ? '<span class="faint">(saved)</span>' : ""}</label><input name="em_pass" type="password" autocomplete="new-password"></div></div>
+        <div class="row2"><div><label class="l">From</label><input name="em_from" value="${esc(em.from)}" placeholder="alerts@yourdomain.com"></div><div><label class="l">Send to</label><input name="em_to" value="${esc(em.to)}" placeholder="team@yourdomain.com, …"></div></div>
+        <label class="check"><input type="checkbox" name="webhook_on" ${wh.enabled ? "checked" : ""}><div><b>Webhook</b><div class="hint">Any URL that accepts a JSON POST — Slack, Discord, Teams, or a WhatsApp gateway.</div></div></label>
+        <label class="l">URL ${wh.has_url ? '<span class="faint">(saved)</span>' : ""}</label><input name="wh_url" type="password" autocomplete="off" placeholder="https://hooks.slack.com/…">
+        <div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" id="nsave">Save</button><button type="button" class="btn" id="ntest">Send test alert</button></div></form></div>
+      <div class="card pad"><h3>What counts as a problem</h3><form id="mf">
+        <label class="check" style="padding-top:0"><input type="checkbox" name="enabled" ${m.enabled ? "checked" : ""}><div><b>Monitoring on</b><div class="hint">Checks every site each minute and every server every 5 minutes.</div></div></label>
+        <div class="row2">${num("down_after", "Failed checks before “down”")}${num("recover_after", "Good checks before “recovered”")}</div>
+        <div class="row2">${num("disk_warn", "Disk warning %")}${num("disk_crit", "Disk critical %")}</div>
+        <div class="row2">${num("mem_warn", "Memory warning %")}${num("cpu_warn", "CPU load per core")}</div>
+        <div class="row2">${num("ssl_warn_days", "HTTPS expiry warning (days)")}${num("ssl_crit_days", "HTTPS expiry critical (days)")}</div>
+        ${num("remind_minutes", "Remind about open incidents every (min)")}
+        <label class="check"><input type="checkbox" name="autoheal" ${m.autoheal ? "checked" : ""}><div><b>Auto-heal</b><div class="hint">When a site is down but its server is fine, restart that server's services once per incident.</div></div></label>
+        <div style="margin-top:10px"><button class="btn primary" id="msave">Save</button></div></form></div></div>`,
+    mount(root) {
+      $("#nf", root).onsubmit = e => { e.preventDefault(); busy($("#nsave", root), async () => {
+        const x = Object.fromEntries(new FormData(e.target));
+        await api("PUT", "/api/notify", { telegram: { enabled: !!x.tg_on, token: x.tg_token, chat_id: x.tg_chat.trim() },
+          email: { enabled: !!x.em_on, host: x.em_host.trim(), port: +x.em_port || 587, user: x.em_user.trim(), password: x.em_pass, from: x.em_from.trim(), to: x.em_to.trim() },
+          webhook: { enabled: !!x.webhook_on, url: x.wh_url } });
+        toast("Saved"); route();
+      }); };
+      $("#ntest", root).onclick = e => busy(e.currentTarget, async () => {
+        const r = await api("POST", "/api/notify/test"), bad = Object.entries(r).filter(([, v]) => v !== "ok");
+        if (bad.length) toast(bad.map(([k, v]) => `${k}: ${v}`).join(" · "), true); else toast("Test alert sent to " + Object.keys(r).join(", "));
+      });
+      $("#mf", root).onsubmit = e => { e.preventDefault(); busy($("#msave", root), async () => {
+        const x = Object.fromEntries(new FormData(e.target)), b = { enabled: !!x.enabled, autoheal: !!x.autoheal };
+        ["down_after", "recover_after", "disk_warn", "disk_crit", "mem_warn", "cpu_warn", "ssl_warn_days", "ssl_crit_days", "remind_minutes"].forEach(k => { b[k] = +x[k]; });
+        await api("PUT", "/api/monitor/settings", b); toast("Saved");
+      }); };
+    },
+  };
+}
+
 const ROUTES = [
   [/^#\/sites$/, pSites, "sites"], [/^#\/sites\/(\d+)(?:\/(\w+))?$/, pSite, "site"], [/^#\/new-site$/, pNewSite, "newsite"],
   [/^#\/servers$/, pServers, "servers"], [/^#\/servers\/(\d+)(?:\/(\w+))?$/, pServer, "server"],
   [/^#\/customers$/, pCustomers, "customers"], [/^#\/approvals$/, pApprovals, "approvals"], [/^#\/audit$/, pAudit, "audit"],
-  [/^#\/apps$/, pApps, "apps"], [/^#\/jobs$/, pJobs, "jobs"], [/^#\/settings(?:\/(\w+))?$/, pSettings, "settings"],
+  [/^#\/monitoring$/, pMonitoring, "monitoring"], [/^#\/backups$/, pBackups, "backups"], [/^#\/apps$/, pApps, "apps"], [/^#\/jobs$/, pJobs, "jobs"], [/^#\/settings(?:\/(\w+))?$/, pSettings, "settings"],
 ];
 
 showAuth();
