@@ -128,7 +128,7 @@ tbody tr:first-child td:first-child{border-top-left-radius:10px}
 .copy .ic{color:var(--ink-3);width:14px;height:14px} .copy:hover .ic{color:var(--ink)}
 .act-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
 .act-row:last-child{border-bottom:0;padding-bottom:0} .act-row:first-of-type{padding-top:0}
-.act-row .t{flex:1;min-width:0} .act-row .t b{font-weight:500;display:block}
+.act-row .t{flex:1;min-width:0} .act-row .t>b{font-weight:500;display:block}
 .act-row .t span{font-size:12.5px;color:var(--ink-3)}
 .note{padding:10px 12px;border-radius:8px;font-size:13px;margin:10px 0;background:var(--gray-bg)}
 .note.ok{background:var(--green-bg);color:var(--green)} .note.bad{background:var(--red-bg);color:var(--red)}
@@ -228,3 +228,32 @@ tbody tr:first-child td:first-child{border-top-left-radius:10px}
   .hide-sm{display:none} .row2{grid-template-columns:1fr} .kv{grid-template-columns:110px minmax(0,1fr)}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ---------- operations, logs, notes, team ---------- */
+.tabs{overflow-x:auto;white-space:nowrap;scrollbar-width:none} .tabs::-webkit-scrollbar{display:none}
+.chip.bad{background:var(--red-bg);color:var(--red)} .chip.info{background:var(--blue-bg);color:var(--blue)}
+.log.inline{border-radius:10px;height:480px;flex:none}
+.logbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.logbar select{width:auto;min-width:150px} .logbar .search{max-width:260px;flex:1}
+.logbar label{display:inline-flex;gap:6px;align-items:center;color:var(--ink-2);font-size:13px;cursor:pointer}
+.timeline{list-style:none;margin:16px 0 0;padding:0}
+.timeline li{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.timeline .av{width:26px;height:26px;border-radius:99px;background:var(--gray-bg);display:grid;place-items:center;font-size:12px;font-weight:600;text-transform:uppercase;flex:none}
+.timeline .tx{white-space:pre-wrap;word-break:break-word} .timeline .mt{font-size:12.5px;color:var(--ink-3)}
+.golive .row{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
+.golive .row:last-child{border-bottom:0}
+.golive .st{width:22px;height:22px;border-radius:99px;display:grid;place-items:center;flex:none;background:var(--gray-bg);color:var(--ink-3);margin-top:1px}
+.golive .st.ok{background:var(--green-bg);color:var(--green)} .golive .st.no{background:var(--amber-bg);color:var(--amber)}
+.golive .st .ic{width:13px;height:13px}
+.golive .b{flex:1;min-width:0} .golive .b b{font-weight:600} .golive .b p{margin:2px 0 6px;color:var(--ink-2)}
+.copyrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
+.copyrow code{background:var(--input);padding:2px 8px;border-radius:6px;font-size:12.5px}
+.rolechip{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px;font-weight:500;background:var(--gray-bg);color:var(--ink-2);text-transform:capitalize}
+.rolechip.admin{background:var(--blue-bg);color:var(--blue)} .rolechip.support{background:var(--green-bg);color:var(--green)}
+.nav .count.warn{background:var(--amber-bg);color:var(--amber)}
+.nav .sep{height:1px;background:var(--line);margin:8px 6px}
+.field-note{font-size:12.5px;color:var(--ink-3)}
+.dangerzone{border-color:color-mix(in srgb,var(--red) 35%,var(--line))}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap}
+select.inl{width:auto;height:28px;font-size:13px;padding:0 8px}
+.pwbox{font-family:ui-monospace,Consolas,monospace;font-size:15px;background:var(--input);padding:10px 12px;border-radius:8px;word-break:break-all;margin:6px 0}

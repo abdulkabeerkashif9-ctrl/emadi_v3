@@ -20,6 +20,19 @@ The server listens on 127.0.0.1 only. Put HTTPS in front of it (reverse proxy) b
 4. **Sites → New site**: domain (checked against your fleet, DNS and cPanel) → server (least-loaded is recommended; busy ones are flagged; you can override) → apps. If an app isn't on the chosen server you're asked whether to install it there too. Optionally creates the DNS A record in cPanel and a Let's Encrypt certificate. The Administrator password is shown under *Login* on the Sites page.
 5. **Sites** dashboard lists domain, company, server IP, apps and live HTTP status. Existing sites on a server are discovered when you refresh it.
 
+## Team, roles and safety
+
+* **Roles** (Settings → Team): *Viewer* reads everything but sees no passwords or logs; *Support* runs day-to-day work (create sites, backups, logs, notes, customers, reset passwords); *Admin* also manages servers, apps, team, settings and deletions.
+* **Approvals:** a Support user who asks to delete a site creates a request; an Admin approves or rejects it (Approvals page). Deletions always need the typed domain and a reason, and take a backup first by default.
+* **Audit log:** every login, view of credentials and change is recorded with user, time and IP. Passwords are never recorded.
+* Upgrading from an older version keeps your data; existing accounts become Admins automatically.
+
+## Site page (for support agents)
+
+Overview (go-live checklist, customer), Operations (maintenance mode, clear cache, migrate, reset Administrator password, backup, extra domain, suspend/reactivate, rename, delete), Backups (list + download), Logs (site, web, worker, scheduler, nginx; filter and auto-refresh), Notes, Apps, Activity. **Open as Administrator** signs in with one click using the stored password.
+
+**Go-live checklist / provider gateway:** tick *Behind a provider gateway* on a server whose VPS has a private address (provider routes web traffic). Each site then shows the exact values to add in the provider's panel and checks DNS and public reachability.
+
 ## Notes / limitations
 
 * "Company" shows what you typed at creation until the ERPNext setup wizard has been completed in the browser; after that the real Company record is read from the site on each refresh.
