@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import db, jobs, ops, security, ssh
+from . import db, jobs, ops, provision, security, ssh
 from .access import ROLE_HELP, ROLES, audit, need, user
 
 router = APIRouter(prefix="/api")
@@ -446,3 +446,37 @@ def audit_list(q: str = "", user_filter: str = Query("", alias="user"), limit: i
         sql += " WHERE " + " AND ".join(cond)
     rows = db.q(sql + " ORDER BY id DESC LIMIT ? OFFSET ?", tuple(args) + (max(1, min(limit, 500)), max(0, offset)))
     return rows
+
+
+# ───────────────────────────── apps on a site ─────────────────────────────
+class SiteApps(BaseModel):
+    apps: list[str] = Field(min_length=1, max_length=20)
+
+
+@router.get("/sites/{sid}/apps")
+def site_apps_info(sid: int, _=Depends(need("support"))):
+    try:
+        return ops.apps_info(sid)
+    except (ops.OpError, ssh.SSHError) as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/sites/{sid}/install-apps")
+def site_install_apps(sid: int, b: SiteApps, request: Request, u=Depends(need("support"))):
+    s = _site(sid)
+    try:
+        names = provision.order_apps(b.apps)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    audit(u, "site_install_apps", s["domain"], ", ".join(names), request)
+    return {"job_id": jobs.start("ops", f"Install apps on {s['domain']}: {', '.join(names)}", lambda log: ops.install_apps_job(sid, names, log), u["username"])}
+
+
+@router.post("/sites/{sid}/update-apps")
+def site_update_apps(sid: int, b: SiteApps, request: Request, u=Depends(need("support"))):
+    s = _site(sid)
+    names = [n for n in b.apps if ops.NAME_RE.match(n)]
+    if not names:
+        raise HTTPException(400, "Choose at least one app")
+    audit(u, "site_update_apps", s["domain"], ", ".join(names), request)
+    return {"job_id": jobs.start("ops", f"Update apps on {s['domain']}: {', '.join(names)}", lambda log: ops.update_apps_job(sid, names, log), u["username"])}

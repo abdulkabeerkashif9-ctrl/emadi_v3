@@ -63,3 +63,7 @@ Overview (go-live checklist, customer), Operations (maintenance mode, clear cach
 - Settings → Alerts: send alerts to **Telegram**, **email (SMTP)** and/or a **webhook** (Slack, Discord, Teams or a WhatsApp gateway). Thresholds and an optional **Auto-heal** (restart the server's services once per incident) are configured there.
 
 > Schedules, monitoring and alerts only run while Fleet Manager is running — keep it on a machine that is always on.
+
+## Installing and updating apps on an existing site
+
+Site → **Apps**: *Install app* adds registry apps to the site (downloading them to the server first if needed); ticking apps and pressing *Update selected* pulls their newest code and migrates the site. Both take a backup first. App code is shared by every site on a server, so an update reaches all of them (they migrate when next migrated).

@@ -118,8 +118,15 @@ class FakeRunner:
             out = "\n".join(["frappe"] + FakeRunner.apps)
         elif "site_config.json" in cmd:
             out = "\n".join(FakeRunner.sites)
+        elif "bench version" in cmd:
+            out = "frappe 15.1.0\n" + "".join(f"{a} 15.2.0\n" for a in FakeRunner.apps)
+        elif "for a in apps/*/" in cmd:
+            out = "frappe|version-15|abc1234|0\n" + "".join(f"{a}|version-15|def5678|{3 if a == 'erpnext' else 0}\n" for a in FakeRunner.apps)
+        elif "install-app" in cmd:
+            n = shlex.split(cmd.split("install-app ")[1])[0]
+            FakeRunner.site_installed.append(n)
         elif "list-apps" in cmd:
-            out = "frappe 15.0\nerpnext 15.0\n"
+            out = "frappe 15.0\nerpnext 15.0\n" + "".join(f"{a} 15.0\n" for a in FakeRunner.site_installed)
         elif "frappe.get_all" in cmd:
             out = "['Old Co']\n" if "--site old.example.com" in cmd else "[]\n"   # no Company until setup wizard
         elif "get-app" in cmd:
@@ -152,6 +159,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.backups, FakeRunner.offsite, FakeRunner.written, FakeRunner.relayed = {}, {}, {}, []
     FakeRunner.backup_fail = FakeRunner.offsite_fail = FakeRunner.restore_fail = False
     FakeRunner.tick = 0
+    FakeRunner.site_installed = []
     monkeypatch.setattr(ssh, "Runner", FakeRunner)
     monkeypatch.setattr(provision.ssh, "Runner", FakeRunner)
     monkeypatch.setattr(main.ssh, "Runner", FakeRunner)

@@ -163,6 +163,92 @@ def migrate_job(site_id, log):
     log("\nMigration finished.\n")
 
 
+# ------------------------------------------------------------ apps on a site
+APP_INFO = ("for a in apps/*/; do n=$(basename $a); [ -d $a.git ] || continue; "
+            "git -C $a fetch -q origin 2>/dev/null; "
+            "echo \"$n|$(git -C $a rev-parse --abbrev-ref HEAD)|$(git -C $a rev-parse --short HEAD)|"
+            "$(git -C $a rev-list --count HEAD..@{u} 2>/dev/null || echo 0)\"; done")
+
+
+def apps_info(site_id):
+    """Installed apps of a site with version and number of upstream commits not yet pulled, plus installable apps."""
+    site, s = get(site_id)
+    with ssh.Runner(s) as r:
+        mine = provision.site_apps(s, r, site["domain"])
+        code, out = r.run(_bench(s, "bench version 2>/dev/null"), as_user=BENCH_USER, stream=False, timeout=60)
+        versions = {l.split()[0]: l.split()[1] for l in out.splitlines() if code == 0 and len(l.split()) >= 2}
+        code, out = r.run(_bench(s, APP_INFO), as_user=BENCH_USER, stream=False, timeout=300)
+        git = {}
+        for l in out.splitlines():
+            p = l.split("|")
+            if len(p) == 4:
+                git[p[0]] = {"branch": p[1], "commit": p[2], "behind": int(p[3]) if p[3].isdigit() else 0}
+    reg = {a["name"]: a for a in db.q("SELECT * FROM apps")}
+    on_server = {a["app_name"] for a in db.q("SELECT app_name FROM server_apps WHERE server_id=?", (s["id"],))}
+    installed = [{"name": n, "title": (reg.get(n) or {}).get("title") or n, "version": versions.get(n, ""), **git.get(n, {})} for n in mine]
+    available = [{"name": n, "title": a["title"], "on_server": n in on_server, "requires": a["requires"]}
+                 for n, a in reg.items() if n not in mine]
+    return {"installed": installed, "available": available}
+
+
+def _store_apps(s, r, site):
+    now = [n for n in provision.site_apps(s, r, site["domain"]) if n != "frappe"]
+    db.x("UPDATE sites SET apps=? WHERE id=?", (",".join(now), site["id"]))
+
+
+def install_apps_job(site_id, names, log):
+    site, s = get(site_id)
+    domain = site["domain"]
+    names = provision.order_apps(names)
+    with ssh.Runner(s, log) as r:
+        have = set(provision.site_apps(s, r, domain))
+        todo = [n for n in names if n not in have]
+        if not todo:
+            log("All of these apps are already installed.\n")
+            return
+        log(f">>> Backing up {domain} before installing\n")
+        _run(r, s, domain, "backup --with-files", "Safety backup")
+        server_has = set(provision.list_bench_apps(s, r))
+        for n in todo:
+            if n not in server_has:
+                provision.get_app(s, r, n, log)
+        for n in todo:
+            log(f"\n>>> Installing {n} on {domain}\n")
+            code, _ = r.run(_site_cmd(s, domain, f"install-app {shlex.quote(n)}"), as_user=BENCH_USER)
+            if code != 0:
+                raise ssh.SSHError(f"install-app {n} failed (exit {code}). The site keeps running; a backup from before is on the Backups tab.")
+        r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
+        provision.sync_server(s, r, log)
+        _store_apps(s, r, site)
+    log("\nApps installed.\n")
+
+
+def update_apps_job(site_id, names, log):
+    """Pull the latest code of the given apps (bench-wide: the code is shared by every site on the server),
+    then migrate this site. Other sites on the server pick up the new code on their next migrate."""
+    site, s = get(site_id)
+    domain = site["domain"]
+    clean = [n for n in names if NAME_RE.match(n)]
+    if not clean:
+        raise OpError("Choose at least one app to update")
+    with ssh.Runner(s, log) as r:
+        log(f">>> Backing up {domain} before updating\n")
+        _run(r, s, domain, "backup --with-files", "Safety backup")
+        log(f"\n>>> Updating {', '.join(clean)}\n")
+        code, _ = r.run(_bench(s, f"bench update --pull --requirements --apps {shlex.quote(','.join(clean))} --no-backup"), as_user=BENCH_USER, timeout=3600)
+        if code != 0:
+            raise ssh.SSHError(f"bench update failed (exit {code}). Check the log above; the pre-update backup is on the Backups tab.")
+        log(f"\n>>> Migrating {domain}\n")
+        code, _ = r.run(_site_cmd(s, domain, "migrate"), as_user=BENCH_USER)
+        if code != 0:
+            raise ssh.SSHError(f"bench migrate failed (exit {code})")
+        r.run(_site_cmd(s, domain, "clear-cache"), as_user=BENCH_USER, stream=False)
+        r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
+        provision.sync_server(s, r, log)
+        _store_apps(s, r, site)
+    log("\nUpdate finished.\n")
+
+
 def rename_job(site_id, new_domain, log):
     site, s = get(site_id)
     chk = domains.check(new_domain)

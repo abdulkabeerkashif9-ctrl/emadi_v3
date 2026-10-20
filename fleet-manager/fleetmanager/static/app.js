@@ -422,7 +422,7 @@ async function pSite(id, tab = "overview") {
   const apps = (s.apps || "").split(",").filter(Boolean);
   const running = S.jobs.find(j => j.status === "running" && j.title.includes(s.domain));
   const tabs = [["overview", "Overview"], ...(can("support") ? [["ops", "Operations"], ["backups", "Backups"], ["logs", "Logs"]] : []),
-    ["notes", "Notes"], ["apps", `Apps (${apps.length + 1})`], ["activity", "Activity"]];
+    ["notes", "Notes"], ["apps", `Apps (${apps.filter(n => n !== "frappe").length + 1})`], ["activity", "Activity"]];
   if (!tabs.some(t => t[0] === tab)) tab = "overview";
   const ctx = { s, srv, apps, running };
   const v = ({ overview: siteOverview, ops: siteOps, backups: siteBackups, logs: siteLogs, notes: siteNotes, apps: siteApps, activity: siteActivity })[tab](ctx);
@@ -576,13 +576,45 @@ function siteNotes({ s }) {
   };
 }
 
-function siteApps({ srv, apps }) {
+function siteApps({ s, srv, apps }) {
   const reg = Object.fromEntries(S.apps.map(a => [a.name, a]));
+  const names = apps.filter(n => n !== "frappe");
+  const staticRows = `<tr><td><div class="cell-main">Frappe Framework</div><div class="cell-sub mono">frappe</div></td><td class="mono">${esc(ver(srv.version))}</td><td></td></tr>
+      ${names.map(n => { const a = reg[n]; return `<tr><td><div class="cell-main">${esc(a ? a.title : n)}</div><div class="cell-sub mono">${esc(n)}</div></td><td class="mono">${esc(a ? (a.branch || ver(srv.version)) : "—")}</td><td></td></tr>`; }).join("")}`;
+  if (!can("support")) return { html: `<div class="card tbl"><table><thead><tr><th>App</th><th>Branch</th><th></th></tr></thead><tbody>${staticRows}</tbody></table></div>` };
   return {
-    html: `<div class="card tbl"><table><thead><tr><th>App</th><th>Repository</th><th>Branch</th></tr></thead><tbody>
-      <tr><td><div class="cell-main">Frappe Framework</div><div class="cell-sub mono">frappe</div></td><td class="mono faint">github.com/frappe/frappe</td><td class="mono">${esc(ver(srv.version))}</td></tr>
-      ${apps.map(n => { const a = reg[n]; return `<tr><td><div class="cell-main">${esc(a ? a.title : n)}</div><div class="cell-sub mono">${esc(n)}</div></td><td class="mono faint">${esc(a ? a.git_url.replace(/^https?:\/\//, "") : "—")}</td><td class="mono">${esc(a ? (a.branch || ver(srv.version)) : "—")}</td></tr>`; }).join("")}</tbody></table></div>`,
+    html: `<div class="toolbar"><div style="flex:1" class="muted" id="appinfo">Apps installed on this site.</div><button class="btn" id="appupd" disabled>${icon("refresh")}Update selected</button><button class="btn primary" id="appadd">${icon("plus")}Install app</button></div>
+      <div class="card tbl" id="appbox"><table><thead><tr><th style="width:36px"></th><th>App</th><th>Version</th><th>Status</th></tr></thead><tbody>${staticRows.replace(/<td><div/g, "<td></td><td><div").replace(/<td class="mono">/g, '<td class="mono">')}</tbody></table></div>
+      <p class="hint">Updating pulls the newest code of an app for <b>every site on ${esc(s.server_name)}</b> (they share it) and then migrates this site. A backup of this site is taken first. Other sites pick up the update at their next migrate.</p>`,
+    async mount(root) {
+      let info;
+      try { info = await api("GET", `/api/sites/${s.id}/apps`); } catch (e) { $("#appinfo", root).textContent = e.message; return; }
+      if (!$("#appbox", root)) return;
+      const rows = info.installed.filter(a => a.name !== "frappe").concat(info.installed.filter(a => a.name === "frappe"));
+      $("#appbox", root).innerHTML = `<table><thead><tr><th style="width:36px"></th><th>App</th><th>Version</th><th>Status</th></tr></thead><tbody>${rows.map(a => `<tr><td><input type="checkbox" class="appck" value="${esc(a.name)}" aria-label="Select ${esc(a.title)}" ${a.behind ? "checked" : ""}></td>
+        <td><div class="cell-main">${esc(a.title)}</div><div class="cell-sub mono">${esc(a.name)}</div></td><td class="mono">${esc(a.version || "—")}<div class="cell-sub">${esc(a.branch || "")} ${esc(a.commit || "")}</div></td>
+        <td>${a.behind ? `<span class="chip warn">${a.behind} update${a.behind > 1 ? "s" : ""} available</span>` : '<span class="chip ok">Up to date</span>'}</td></tr>`).join("")}</tbody></table>`;
+      const n = info.installed.filter(a => a.behind).length;
+      $("#appinfo", root).textContent = n ? `${n} app${n > 1 ? "s have" : " has"} updates available.` : "Everything is up to date.";
+      const upd = $("#appupd", root), cks = () => $$(".appck", root).filter(c => c.checked).map(c => c.value);
+      const sync = () => { upd.disabled = !cks().length; }; $$(".appck", root).forEach(c => c.onchange = sync); sync();
+      upd.onclick = async () => {
+        const sel = cks();
+        if (!await confirmBox("Update apps", `Update <b>${esc(sel.join(", "))}</b>? A backup of ${esc(s.domain)} is taken first. The code is shared, so <b>every site on ${esc(s.server_name)}</b> gets the new version and may briefly restart.`, "Update")) return;
+        busy(upd, async () => { const r = await api("POST", `/api/sites/${s.id}/update-apps`, { apps: sel }); startJob(r.job_id, `Update apps on ${s.domain}`); });
+      };
+      $("#appadd", root).onclick = () => installAppDialog(s, info.available);
+    },
   };
+}
+function installAppDialog(s, avail) {
+  if (!avail.length) { dialog("Install app", `<p class="muted" style="margin:0">Every app in the registry is already installed on this site. Add more under <a href="#/apps" style="text-decoration:underline" data-close>Apps</a>.</p>`, `<button class="btn primary" data-close>OK</button>`, { noFocus: true }); return; }
+  const d = dialog("Install app", `<p class="muted" style="margin:0 0 8px">A backup of <b>${esc(s.domain)}</b> is taken first. Apps not yet on the server are downloaded there (this can take several minutes).</p>
+    ${avail.map(a => `<label class="check"><input type="checkbox" value="${esc(a.name)}"><div><b>${esc(a.title)}</b> <span class="faint mono">${esc(a.name)}</span><div class="hint">${a.on_server ? "Already on the server" : "Will be downloaded to the server"}${a.requires ? ` · needs ${esc(a.requires)}` : ""}</div></div></label>`).join("")}`,
+    `<button class="btn" data-close>Cancel</button><button class="btn primary" id="go" disabled>Install</button>`, { noFocus: true });
+  const sel = () => $$("input:checked", d).map(c => c.value);
+  d.addEventListener("change", () => { $("#go", d).disabled = !sel().length; });
+  $("#go", d).onclick = e => busy(e.currentTarget, async () => { const r = await api("POST", `/api/sites/${s.id}/install-apps`, { apps: sel() }); d.close(); startJob(r.job_id, `Install apps on ${s.domain}`); });
 }
 function siteActivity({ s }) {
   const js = S.jobs.filter(j => j.title.includes(s.domain));
