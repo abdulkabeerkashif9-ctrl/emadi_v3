@@ -46,3 +46,12 @@ def test_update_rejects_bad_names_and_viewers(client, sid):
         client.post("/api/team", json={"username": "vera2", "password": "password123", "role": "viewer"})
     c.post("/api/auth/login", json={"username": "vera2", "password": "password123"})
     assert c.post(f"/api/sites/{sid}/install-apps", json={"apps": ["hrms"]}).status_code == 403
+
+
+def test_custom_repo_without_version_branch_falls_back_to_default_branch(client, sid):
+    db.x("INSERT OR REPLACE INTO apps(name,title,git_url,branch,requires) VALUES('custom_app','Custom','https://github.com/x/custom_app.git',NULL,'')")
+    FakeRunner.no_branch = True
+    j = wait_job(client, client.post(f"/api/sites/{sid}/install-apps", json={"apps": ["custom_app"]}).json()["job_id"])
+    assert j["status"] == "done", j["log"]
+    assert "default branch 'main'" in j["log"]
+    assert any("--branch main" in c[1] for c in FakeRunner.calls)

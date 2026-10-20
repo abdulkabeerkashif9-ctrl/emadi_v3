@@ -1,6 +1,7 @@
 """Everything that actually touches a VPS: bootstrap script, configuring, metrics, sites, apps."""
 import ast
 import json
+import re
 import shlex
 
 from . import config, cpanel, db, domains, security, ssh
@@ -360,14 +361,27 @@ def missing_on_server(server_id, names):
     return [n for n in order_apps(names) if n not in have]
 
 
+def _default_branch(s, r, url):
+    code, out = r.run(f"git ls-remote --symref {shlex.quote(url)} HEAD", stream=False, timeout=60)
+    m = re.search(r"ref:\s+refs/heads/(\S+)\s+HEAD", out) if code == 0 else None
+    return m.group(1) if m else None
+
+
 def get_app(s, r, name, log):
     a = db.q1("SELECT * FROM apps WHERE name=?", (name,))
     branch = a["branch"] or s["version"]
     log(f"\n>>> Fetching app {name} ({a['git_url']} @ {branch})\n")
-    code, _ = r.run(_bench(s, f"bench get-app --branch {shlex.quote(branch)} {shlex.quote(a['git_url'])}"),
-                    as_user=BENCH_USER)
+    cmd = lambda b: _bench(s, f"bench get-app --branch {shlex.quote(b)} {shlex.quote(a['git_url'])}")
+    code, out = r.run(cmd(branch), as_user=BENCH_USER)
+    if code != 0 and not a["branch"]:
+        # a custom repo often has no branch named like the ERPNext version: use the repository's default branch
+        alt = _default_branch(s, r, a["git_url"])
+        if alt and alt != branch:
+            log(f"\n>>> Branch {branch} does not exist in this repository; using its default branch '{alt}' instead\n")
+            code, out = r.run(cmd(alt), as_user=BENCH_USER)
     if code != 0:
-        raise ssh.SSHError(f"bench get-app failed for {name} (exit {code}). Check the git URL/branch in Apps.")
+        raise ssh.SSHError(f"bench get-app failed for {name} (exit {code}). Check the git URL and branch of this app under Apps"
+                           f"{' (this repository has no branch ' + repr(branch) + ' - set its real branch there)' if not a['branch'] else ''}.")
     db.x("INSERT OR IGNORE INTO server_apps VALUES(?,?)", (s["id"], name))
 
 

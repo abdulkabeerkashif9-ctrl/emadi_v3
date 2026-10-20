@@ -129,6 +129,10 @@ class FakeRunner:
             out = "frappe 15.0\nerpnext 15.0\n" + "".join(f"{a} 15.0\n" for a in FakeRunner.site_installed)
         elif "frappe.get_all" in cmd:
             out = "['Old Co']\n" if "--site old.example.com" in cmd else "[]\n"   # no Company until setup wizard
+        elif "ls-remote --symref" in cmd:
+            out = "ref: refs/heads/main\tHEAD\nabc\tHEAD\n"
+        elif "get-app" in cmd and FakeRunner.no_branch and "--branch version-" in cmd:
+            return 1, "Remote branch version-15 not found"
         elif "get-app" in cmd:
             name = cmd.split("/")[-1].split()[0].replace("'", "")
             if name not in FakeRunner.apps:
@@ -160,6 +164,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.backup_fail = FakeRunner.offsite_fail = FakeRunner.restore_fail = False
     FakeRunner.tick = 0
     FakeRunner.site_installed = []
+    FakeRunner.no_branch = False
     monkeypatch.setattr(ssh, "Runner", FakeRunner)
     monkeypatch.setattr(provision.ssh, "Runner", FakeRunner)
     monkeypatch.setattr(main.ssh, "Runner", FakeRunner)
