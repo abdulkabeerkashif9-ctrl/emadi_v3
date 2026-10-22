@@ -160,6 +160,90 @@ class Runner:
     def sftp(self):
         return self.client.open_sftp()
 
+    # ---- file transfer: SFTP when the server has it, plain `cat` over an exec channel otherwise
+    def _open_exec(self, cmd, sudo=False):
+        login = self.s["ssh_user"]
+        pw = None
+        if sudo and login != "root":
+            if self.s["auth_type"] == "password":
+                cmd, pw = f"sudo -S -p '' {cmd}", self.secret
+            else:
+                cmd = f"sudo -n {cmd}"
+        chan = self.client.get_transport().open_session()
+        chan.set_combine_stderr(False)
+        chan.settimeout(600)
+        chan.exec_command(cmd)
+        if pw:
+            chan.sendall(pw + "\n")
+        return chan
+
+    def write_chunks(self, path, chunks):
+        """Write an iterable of bytes to `path` on the server; returns bytes written."""
+        total = 0
+        try:
+            sf = self.client.open_sftp()
+        except (paramiko.SSHException, EOFError, OSError):
+            sf = None
+        if sf:
+            try:
+                with sf.open(path, "wb") as dst:
+                    for c in chunks:
+                        dst.write(c)
+                        total += len(c)
+                return total
+            except (paramiko.SSHException, EOFError):
+                pass            # no working sftp subsystem: fall through to cat
+            finally:
+                try:
+                    sf.close()
+                except Exception:
+                    pass
+        chan = self._open_exec(f"sh -c {shlex.quote('cat > ' + shlex.quote(path))}")
+        total = 0
+        for c in chunks:
+            chan.sendall(c)
+            total += len(c)
+        chan.shutdown_write()
+        err = b""
+        while chan.recv_stderr_ready():
+            err += chan.recv_stderr(4096)
+        code = chan.recv_exit_status()
+        if code != 0:
+            raise SSHError(f"Could not write {path} on the server (exit {code}): {err.decode('utf-8', 'replace').strip()[-200:]}")
+        return total
+
+    def read_chunks(self, path, sudo=False, size=262144):
+        """Yield the file's bytes. Falls back from SFTP to `cat` (with sudo if asked) when SFTP is unavailable."""
+        try:
+            sf = self.client.open_sftp()
+            f = sf.open(path, "rb")
+        except (paramiko.SSHException, EOFError, OSError):
+            sf = f = None
+        if f:
+            try:
+                while True:
+                    c = f.read(size)
+                    if not c:
+                        return
+                    yield c
+            finally:
+                sf.close()
+        chan = self._open_exec(f"cat {shlex.quote(path)}", sudo=sudo)
+        while True:
+            c = chan.recv(size)
+            if not c:
+                break
+            yield c
+        code = chan.recv_exit_status()
+        if code != 0:
+            raise SSHError(f"Could not read {path} on the server (exit {code}); check the file exists")
+
+    def file_size(self, path):
+        code, out = self.run(f"stat -c %s {shlex.quote(path)}", sudo=True, stream=False)
+        if code != 0 or not out.strip().isdigit():
+            raise SSHError(f"File not found: {path}")
+        return int(out.strip())
+
     def write_file(self, path, content, mode=0o644):
         sftp = self.client.open_sftp()
         try:

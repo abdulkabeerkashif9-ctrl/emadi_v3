@@ -465,21 +465,20 @@ def upload_db_job(site_id, local_path, filename, log):
             remote = f"{stage}/database{ext}"
             with ssh.Runner(s, log) as r:
                 try:
-                    r.run(f"mkdir -p {stage} && chmod 755 {stage}", sudo=True, stream=False)
+                    r.run(f"mkdir -p {stage} && chmod 777 {stage}", sudo=True, stream=False)
                     log(f"\n>>> Sending {filename} ({size >> 20 or 1} MB) to {s['name']}\n")
-                    sf, total = r.sftp(), 0
-                    try:
-                        with open(local_path, "rb") as src, sf.open(remote, "wb") as dst:
+                    def chunks():
+                        sent = 0
+                        with open(local_path, "rb") as src:
                             while True:
                                 chunk = src.read(262144)
                                 if not chunk:
-                                    break
-                                dst.write(chunk)
-                                total += len(chunk)
-                                if total // (64 << 20) != (total - len(chunk)) // (64 << 20):
-                                    log(f"    {total >> 20} MB sent…\n")
-                    finally:
-                        sf.close()
+                                    return
+                                yield chunk
+                                sent += len(chunk)
+                                if sent // (64 << 20) != (sent - len(chunk)) // (64 << 20):
+                                    log(f"    {sent >> 20} MB sent…\n")
+                    r.write_chunks(remote, chunks())
                     r.run(f"chmod 644 {shlex.quote(remote)}", sudo=True, stream=False)
                     log("\n>>> Loading the database (the site is in maintenance mode meanwhile)\n")
                     r.run(ops._site_cmd(s, domain, "set-maintenance-mode on"), as_user=BENCH_USER, stream=False)
@@ -505,20 +504,16 @@ def upload_db_job(site_id, local_path, filename, log):
 
 # ───────────────────────────── move to another server ─────────────────────────────
 def _relay(rs, rt, src, dst, log):
-    a, b = rs.sftp(), rt.sftp()
     total = 0
-    try:
-        with a.open(src, "rb") as fa, b.open(dst, "wb") as fb:
-            while True:
-                chunk = fa.read(262144)
-                if not chunk:
-                    break
-                fb.write(chunk)
-                total += len(chunk)
-                if total // (64 << 20) != (total - len(chunk)) // (64 << 20):
-                    log(f"    {total >> 20} MB copied…\n")
-    finally:
-        a.close(); b.close()
+
+    def chunks():
+        nonlocal total
+        for chunk in rs.read_chunks(src, sudo=True):
+            total += len(chunk)
+            if total // (64 << 20) != (total - len(chunk)) // (64 << 20):
+                log(f"    {total >> 20} MB copied…\n")
+            yield chunk
+    rt.write_chunks(dst, chunks())
     return total
 
 

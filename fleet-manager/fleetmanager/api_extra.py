@@ -154,9 +154,7 @@ def backup_download(sid: int, name: str, request: Request, u=Depends(need("suppo
     path = _run(ops.backup_path, site, srv, name)
     runner = ssh.Runner(srv).connect()
     try:
-        sftp = runner.client.open_sftp()
-        size = sftp.stat(path).st_size
-        f = sftp.open(path, "rb")
+        size = runner.file_size(path)
     except Exception as e:
         runner.close()
         raise HTTPException(404, f"Backup not found: {e}")
@@ -164,11 +162,7 @@ def backup_download(sid: int, name: str, request: Request, u=Depends(need("suppo
 
     def stream():
         try:
-            while True:
-                chunk = f.read(65536)
-                if not chunk:
-                    break
-                yield chunk
+            yield from runner.read_chunks(path, sudo=True, size=65536)
         finally:
             runner.close()
     return StreamingResponse(stream(), media_type="application/octet-stream",

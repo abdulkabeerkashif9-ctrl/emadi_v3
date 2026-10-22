@@ -154,3 +154,33 @@ def test_streamed_command_reports_lost_connection_instead_of_retrying():
     with pytest.raises(ssh.SSHError, match="connection to the VPS was lost"):
         r.run("long install")
     assert calls == []
+
+
+def test_file_transfer_falls_back_to_cat_when_sftp_is_missing():
+    import paramiko
+    from fleetmanager import ssh
+
+    class Chan:
+        def __init__(c): c.sent, c.cmd, c.data = b"", None, b"hello world"
+        def settimeout(c, t): pass
+        def set_combine_stderr(c, v): pass
+        def exec_command(c, cmd): c.cmd = cmd
+        def sendall(c, d): c.sent += d if isinstance(d, bytes) else d.encode()
+        def shutdown_write(c): pass
+        def recv_stderr_ready(c): return False
+        def recv_exit_status(c): return 0
+        def recv(c, n):
+            d, c.data = c.data[:n], c.data[n:]; return d
+
+    chans = []
+    class T:
+        def open_session(t): chans.append(Chan()); return chans[-1]
+    class Client:
+        def open_sftp(c): raise paramiko.SSHException("Channel closed")
+        def get_transport(c): return T()
+
+    r = Runner({"ip": "x", "ssh_port": 22, "ssh_user": "root", "auth_type": "password", "secret_enc": None})
+    r.client = Client()
+    assert r.write_chunks("/tmp/x y", iter([b"ab", b"cd"])) == 4
+    assert chans[0].sent == b"abcd" and "cat >" in chans[0].cmd and "/tmp/x y" in chans[0].cmd
+    assert b"".join(r.read_chunks("/tmp/f", sudo=True, size=4)) == b"hello world" and chans[1].cmd == "cat /tmp/f"

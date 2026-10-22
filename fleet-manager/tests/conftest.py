@@ -50,6 +50,15 @@ class FakeRunner:
             def close(s): pass
         return S()
 
+    def write_chunks(self, path, chunks):
+        n = sum(len(c) for c in chunks)
+        FakeRunner.relayed.append((path, n)); return n
+
+    def read_chunks(self, path, sudo=False, size=262144):
+        yield b"data:" + path.encode()
+
+    def file_size(self, path): return 123
+
     def _files(self, dom):
         return FakeRunner.backups.setdefault(dom, [{"name": "20261018_100000-x-files.tar", "size": 4096, "mtime": 1792317601},
                                                    {"name": "20261018_100000-x_database.sql.gz", "size": 2048, "mtime": 1792317600}])
