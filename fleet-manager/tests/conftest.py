@@ -122,6 +122,10 @@ class FakeRunner:
             out = "frappe 15.1.0\n" + "".join(f"{a} 15.2.0\n" for a in FakeRunner.apps)
         elif "for a in apps/*/" in cmd:
             out = "frappe|version-15|abc1234|0\n" + "".join(f"{a}|version-15|def5678|{3 if a == 'erpnext' else 0}\n" for a in FakeRunner.apps)
+        elif "bench new-app" in cmd:
+            n = cmd.split("bench new-app ")[1].split()[0].strip("'")
+            if n not in FakeRunner.apps:
+                FakeRunner.apps.append(n)
         elif "install-app" in cmd:
             n = shlex.split(cmd.split("install-app ")[1])[0]
             FakeRunner.site_installed.append(n)

@@ -67,3 +67,8 @@ Overview (go-live checklist, customer), Operations (maintenance mode, clear cach
 ## Installing and updating apps on an existing site
 
 Site → **Apps**: *Install app* adds registry apps to the site (downloading them to the server first if needed); ticking apps and pressing *Update selected* pulls their newest code and migrates the site. Both take a backup first. App code is shared by every site on a server, so an update reaches all of them (they migrate when next migrated).
+
+## Upload database and empty app
+
+- **Upload database** (admin; site → Operations): upload a `.sql` or `.sql.gz` dump and it replaces the site's data. A safety backup is taken first, and the site is in maintenance mode while it loads. The Administrator password becomes the one stored in the dump.
+- **Create & install empty app** (site → Apps): creates a blank app named after the site's subdomain (`test9.example.com` → `test9`; names starting with a digit get an `app_` prefix) and installs it on the site.

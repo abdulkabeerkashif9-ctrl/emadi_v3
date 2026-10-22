@@ -441,6 +441,68 @@ def restore_job(site_id, group, source, log):
     log("\nRestore finished. The Administrator password is now the one from that backup; use Reset password if you don't know it.\n")
 
 
+# ───────────────────────────── upload a database file ─────────────────────────────
+DB_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\- ]{0,150}\.(sql|sql\.gz)$", re.I)
+
+
+def upload_db_job(site_id, local_path, filename, log):
+    """Replace the site's database with an uploaded .sql / .sql.gz dump. The local temp file is always deleted."""
+    import os
+    try:
+        site, s = ops.get(site_id)
+        domain = site["domain"]
+        if not DB_FILE_RE.match(filename or ""):
+            raise ssh.SSHError("Only .sql or .sql.gz files can be uploaded")
+        size = os.path.getsize(local_path)
+        if size <= 0:
+            raise ssh.SSHError("The uploaded file is empty")
+        pw = security.decrypt(s["db_root_pw_enc"])
+        ext = ".sql.gz" if filename.lower().endswith(".gz") else ".sql"
+        with _lock(s["id"]):
+            log(">>> Safety backup of the current state (so this upload can be undone)\n")
+            run_backup(site_id, "pre-upload", log)
+            stage = f"/tmp/fm-upload-{secrets.token_hex(5)}"
+            remote = f"{stage}/database{ext}"
+            with ssh.Runner(s, log) as r:
+                try:
+                    r.run(f"mkdir -p {stage} && chmod 755 {stage}", sudo=True, stream=False)
+                    log(f"\n>>> Sending {filename} ({size >> 20 or 1} MB) to {s['name']}\n")
+                    sf, total = r.sftp(), 0
+                    try:
+                        with open(local_path, "rb") as src, sf.open(remote, "wb") as dst:
+                            while True:
+                                chunk = src.read(262144)
+                                if not chunk:
+                                    break
+                                dst.write(chunk)
+                                total += len(chunk)
+                                if total // (64 << 20) != (total - len(chunk)) // (64 << 20):
+                                    log(f"    {total >> 20} MB sent…\n")
+                    finally:
+                        sf.close()
+                    r.run(f"chmod 644 {shlex.quote(remote)}", sudo=True, stream=False)
+                    log("\n>>> Loading the database (the site is in maintenance mode meanwhile)\n")
+                    r.run(ops._site_cmd(s, domain, "set-maintenance-mode on"), as_user=BENCH_USER, stream=False)
+                    code, _ = r.run(ops._site_cmd(s, domain, f"--force restore {shlex.quote(remote)} --db-root-password {shlex.quote(pw)}"), as_user=BENCH_USER)
+                    if code != 0:
+                        r.run(ops._site_cmd(s, domain, "set-maintenance-mode off"), as_user=BENCH_USER, stream=False)
+                        raise ssh.SSHError(f"Loading the database failed (exit {code}). The safety backup taken just before is in the Backups tab.")
+                    log("\n>>> Migrating\n")
+                    r.run(ops._site_cmd(s, domain, "migrate"), as_user=BENCH_USER)
+                    r.run(ops._site_cmd(s, domain, "clear-cache"), as_user=BENCH_USER, stream=False)
+                    if not site["suspended"]:
+                        r.run(ops._site_cmd(s, domain, "set-maintenance-mode off"), as_user=BENCH_USER, stream=False)
+                    provision.sync_server(s, r, log)
+                finally:
+                    r.run(f"rm -rf {stage}", sudo=True, stream=False)
+        log("\nDatabase uploaded. The Administrator password is now the one stored in that database; use Reset password if you don't know it.\n")
+    finally:
+        try:
+            os.remove(local_path)
+        except OSError:
+            pass
+
+
 # ───────────────────────────── move to another server ─────────────────────────────
 def _relay(rs, rt, src, dst, log):
     a, b = rs.sftp(), rt.sftp()

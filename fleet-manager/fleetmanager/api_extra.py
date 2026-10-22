@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import db, jobs, ops, provision, security, ssh
+from . import backups, config, db, jobs, ops, provision, security, ssh
 from .access import ROLE_HELP, ROLES, audit, need, user
 
 router = APIRouter(prefix="/api")
@@ -480,3 +480,39 @@ def site_update_apps(sid: int, b: SiteApps, request: Request, u=Depends(need("su
         raise HTTPException(400, "Choose at least one app")
     audit(u, "site_update_apps", s["domain"], ", ".join(names), request)
     return {"job_id": jobs.start("ops", f"Update apps on {s['domain']}: {', '.join(names)}", lambda log: ops.update_apps_job(sid, names, log), u["username"])}
+
+
+@router.post("/sites/{sid}/empty-app")
+def site_empty_app(sid: int, request: Request, u=Depends(need("support"))):
+    s = _site(sid)
+    name = ops.empty_app_name(s["domain"])
+    audit(u, "site_empty_app", s["domain"], name, request)
+    return {"app": name, "job_id": jobs.start("ops", f"Create empty app {name} on {s['domain']}", lambda log: ops.empty_app_job(sid, log), u["username"])}
+
+
+@router.put("/sites/{sid}/upload-db")
+async def site_upload_db(sid: int, request: Request, filename: str, confirm: str, u=Depends(need("admin"))):
+    """Raw request body = the .sql / .sql.gz file (streamed to disk, so large dumps don't fill memory)."""
+    import secrets
+    from starlette.concurrency import run_in_threadpool
+    s = _site(sid)
+    if confirm.strip().lower() != s["domain"]:
+        raise HTTPException(400, "Type the site's domain exactly to confirm")
+    if not backups.DB_FILE_RE.match(filename):
+        raise HTTPException(400, "Only .sql or .sql.gz files can be uploaded")
+    folder = config.DATA_DIR / "uploads"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{secrets.token_hex(8)}{'.sql.gz' if filename.lower().endswith('.gz') else '.sql'}"
+    total = 0
+    try:
+        with open(path, "wb") as f:
+            async for chunk in request.stream():
+                total += len(chunk)
+                await run_in_threadpool(f.write, chunk)
+        if not total:
+            raise HTTPException(400, "The uploaded file is empty")
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    audit(u, "site_upload_db", s["domain"], f"{filename} ({total >> 20} MB)", request)
+    return {"job_id": jobs.start("ops", f"Upload database to {s['domain']}", lambda log: backups.upload_db_job(sid, str(path), filename, log), u["username"])}

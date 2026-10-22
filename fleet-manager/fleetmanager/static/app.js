@@ -317,6 +317,12 @@ const ACT = {
   bkpolicy: el => busy(null, () => policyDialog(el.dataset.id ? +el.dataset.id : null)),
   restore: el => restoreDialog(siteById(el.dataset.id), JSON.parse(el.dataset.g)),
   opmove: el => moveDialog(siteById(el.dataset.id)),
+  opuploaddb: el => uploadDbDialog(siteById(el.dataset.id)),
+  emptyapp: el => busy(null, async () => {
+    const s = siteById(el.dataset.id), name = emptyAppName(s.domain);
+    if (!await confirmBox("Create & install empty app", `Creates a new empty app named <b class="mono">${esc(name)}</b> on <b>${esc(s.server_name)}</b> and installs it on <b>${esc(s.domain)}</b>. A backup of the site is taken first.`, "Create & install")) return;
+    const r = await api("POST", `/api/sites/${s.id}/empty-app`); startJob(r.job_id, `Create empty app ${r.app}`);
+  }),
   // ── customers, team, approvals
   newcustomer: () => customerForm(),
   editcustomer: el => customerForm(S.customers.find(c => c.id === +el.dataset.id)),
@@ -497,6 +503,7 @@ function siteOps({ s }) {
         ${actRow("Restart server services", `Restarts web, workers and nginx for <b>all sites</b> on ${esc(s.server_name)}`, `<button class="btn sm" data-act="oprestart" data-server="${s.server_id}">Restart</button>`)}</div>
       <div class="card pad"><h3>Access &amp; data</h3>
         ${actRow("Back up now", "Database and files; download from Backups", b("opbackup", "Back up"))}
+        ${can("admin") ? actRow("Upload database", "Replace this site's data with a .sql or .sql.gz file", b("opuploaddb", "Upload…")) : ""}
         ${actRow("Reset Administrator password", "Generates a new password", b("opreset", "Reset…"))}
         ${actRow("Add a domain", "Serve this site on another domain too", b("opadddomain", "Add…"))}
         ${actRow(s.suspended ? "Reactivate site" : "Suspend site", s.suspended ? "Turns maintenance mode off" : "For unpaid or ended accounts: maintenance page on, with a note", b("opsuspend", s.suspended ? "Reactivate" : "Suspend…"))}</div></div>
@@ -583,7 +590,7 @@ function siteApps({ s, srv, apps }) {
       ${names.map(n => { const a = reg[n]; return `<tr><td><div class="cell-main">${esc(a ? a.title : n)}</div><div class="cell-sub mono">${esc(n)}</div></td><td class="mono">${esc(a ? (a.branch || ver(srv.version)) : "—")}</td><td></td></tr>`; }).join("")}`;
   if (!can("support")) return { html: `<div class="card tbl"><table><thead><tr><th>App</th><th>Branch</th><th></th></tr></thead><tbody>${staticRows}</tbody></table></div>` };
   return {
-    html: `<div class="toolbar"><div style="flex:1" class="muted" id="appinfo">Apps installed on this site.</div><button class="btn" id="appupd" disabled>${icon("refresh")}Update selected</button><button class="btn primary" id="appadd">${icon("plus")}Install app</button></div>
+    html: `<div class="toolbar"><div style="flex:1" class="muted" id="appinfo">Apps installed on this site.</div><button class="btn" id="appupd" disabled>${icon("refresh")}Update selected</button><button class="btn" id="appempty" data-act="emptyapp" data-id="${s.id}">Create &amp; install empty app</button><button class="btn primary" id="appadd">${icon("plus")}Install app</button></div>
       <div class="card tbl" id="appbox"><table><thead><tr><th style="width:36px"></th><th>App</th><th>Version</th><th>Status</th></tr></thead><tbody>${staticRows.replace(/<td><div/g, "<td></td><td><div").replace(/<td class="mono">/g, '<td class="mono">')}</tbody></table></div>
       <p class="hint">Updating pulls the newest code of an app for <b>every site on ${esc(s.server_name)}</b> (they share it) and then migrates this site. A backup of this site is taken first. Other sites pick up the update at their next migrate.</p>`,
     async mount(root) {
@@ -605,6 +612,35 @@ function siteApps({ s, srv, apps }) {
       };
       $("#appadd", root).onclick = () => installAppDialog(s, info.available);
     },
+  };
+}
+const EMPTY_RESERVED = new Set(["frappe", "erpnext", "hrms", "payments", "lending", "healthcare", "education", "webshop", "crm", "helpdesk", "insights", "builder", "print_designer", "test", "tests"]);
+function emptyAppName(domain) {
+  let n = domain.split(".")[0].toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "site";
+  if (!/^[a-z]/.test(n)) n = "app_" + n;
+  if (EMPTY_RESERVED.has(n)) n += "_app";
+  return n.slice(0, 60);
+}
+function uploadDbDialog(s) {
+  const d = dialog("Upload database", `<div class="note warn" style="margin-top:0">This <b>replaces all data</b> of ${esc(s.domain)} with the contents of the file. A safety backup is taken first, and the Administrator password becomes the one stored in that database.</div>
+    <label class="l">Database file <span class="faint">(.sql or .sql.gz)</span></label><input type="file" id="fl" accept=".sql,.gz">
+    <label class="l">Type <b>${esc(s.domain)}</b> to confirm</label><input id="cf" autocomplete="off" spellcheck="false">
+    <div class="meter" id="pg" hidden style="margin-top:14px"><i style="width:0"></i></div><div class="hint" id="pgt"></div>`,
+    `<button class="btn" data-close>Cancel</button><button class="btn danger" id="go" disabled>Upload and replace</button>`, { noFocus: true });
+  const ok = () => { const f = $("#fl", d).files[0]; $("#go", d).disabled = !(f && /\.(sql|sql\.gz)$/i.test(f.name) && $("#cf", d).value.trim().toLowerCase() === s.domain); };
+  $("#fl", d).onchange = ok; $("#cf", d).oninput = ok;
+  $("#go", d).onclick = e => {
+    const btn = e.currentTarget, f = $("#fl", d).files[0]; btn.disabled = true; $("#fl", d).disabled = true; $("#cf", d).disabled = true; $("#pg", d).hidden = false;
+    const x = new XMLHttpRequest();
+    x.open("PUT", `/api/sites/${s.id}/upload-db?filename=${encodeURIComponent(f.name)}&confirm=${encodeURIComponent($("#cf", d).value.trim())}`);
+    x.upload.onprogress = ev => { if (ev.lengthComputable) { $("#pg i", d).style.width = (100 * ev.loaded / ev.total) + "%"; $("#pgt", d).textContent = `Uploading… ${Math.round(ev.loaded / 1048576)} of ${Math.round(ev.total / 1048576) || 1} MB`; } };
+    x.onload = () => {
+      let r = {}; try { r = JSON.parse(x.responseText); } catch { /* ignore */ }
+      if (x.status === 200) { d.close(); startJob(r.job_id, `Upload database to ${s.domain}`); return; }
+      toast(typeof r.detail === "string" ? r.detail : "Upload failed (" + x.status + ")", true); d.close();
+    };
+    x.onerror = () => { toast("Upload failed: connection lost", true); d.close(); };
+    x.send(f);
   };
 }
 function installAppDialog(s, avail) {

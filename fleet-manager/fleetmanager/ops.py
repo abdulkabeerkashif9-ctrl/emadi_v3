@@ -249,6 +249,50 @@ def update_apps_job(site_id, names, log):
     log("\nUpdate finished.\n")
 
 
+RESERVED_APPS = {"frappe", "erpnext", "hrms", "payments", "lending", "healthcare", "education", "webshop", "crm", "helpdesk", "insights", "builder", "print_designer", "test", "tests"}
+
+
+def empty_app_name(domain):
+    """Python-module-safe name from the site's subdomain: test9.example.com -> app_test9 (a leading digit is not a valid module name)."""
+    n = re.sub(r"[^a-z0-9]+", "_", domain.split(".")[0].lower()).strip("_") or "site"
+    if not n[0].isalpha():
+        n = "app_" + n
+    if n in RESERVED_APPS:
+        n += "_app"
+    return n[:60]
+
+
+def empty_app_job(site_id, log):
+    """bench new-app (answers the prompts), then install it on this site."""
+    site, s = get(site_id)
+    domain, name = site["domain"], empty_app_name(site["domain"])
+    with ssh.Runner(s, log) as r:
+        installed = set(provision.site_apps(s, r, domain))
+        if name in installed:
+            log(f"The app '{name}' is already installed on {domain}.\n")
+            return
+        if name in set(provision.list_bench_apps(s, r)):
+            log(f">>> App '{name}' already exists on the server; installing it on the site\n")
+        else:
+            log(f">>> Creating empty app '{name}'\n")
+            answers = " ".join(shlex.quote(a) for a in (name.replace("_", " ").title(), f"Custom app for {domain}", "Fleet Manager", "admin@example.com", "", "", "mit"))
+            # prompts: title, description, publisher, email, icon, color, license, then optional extras -> defaults
+            cmd = f"{{ printf '%s\\n' {answers}; yes ''; }} | bench new-app {shlex.quote(name)}"
+            code, _ = r.run(_bench(s, cmd), as_user=BENCH_USER)
+            if code != 0:
+                raise ssh.SSHError(f"bench new-app failed (exit {code})")
+        log(f"\n>>> Backing up {domain} before installing\n")
+        _run(r, s, domain, "backup --with-files", "Safety backup")
+        log(f"\n>>> Installing {name} on {domain}\n")
+        code, _ = r.run(_site_cmd(s, domain, f"install-app {shlex.quote(name)}"), as_user=BENCH_USER)
+        if code != 0:
+            raise ssh.SSHError(f"install-app {name} failed (exit {code})")
+        r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
+        provision.sync_server(s, r, log)
+        _store_apps(s, r, site)
+    log(f"\nEmpty app '{name}' created and installed. Its code is in apps/{name} on the server.\n")
+
+
 def rename_job(site_id, new_domain, log):
     site, s = get(site_id)
     chk = domains.check(new_domain)
