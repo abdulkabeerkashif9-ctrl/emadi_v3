@@ -494,7 +494,7 @@ async function loadGolive(root, s) {
 }
 
 function siteOps({ s }) {
-  const id = s.id, b = (act, label, cls = "", extra = "") => `<button class="btn sm ${cls}" data-act="${act}" data-id="${id}" ${extra}>${label}</button>`;
+  const id = s.id, mountOps = async root => { const box = $("#lastrow", root); if (!box) return; const g = await latestBackup(s).catch(() => null); if (box.isConnected) box.innerHTML = lastBackupRow(s, g); }, b = (act, label, cls = "", extra = "") => `<button class="btn sm ${cls}" data-act="${act}" data-id="${id}" ${extra}>${label}</button>`;
   return {
     html: `<div class="cards"><div class="card pad"><h3>Maintenance</h3>
         ${actRow("Maintenance mode", "Shows a maintenance page to visitors", `<div class="btnrow">${b("opmaint", "Turn on", "", 'data-on="1"')}${b("opmaint", "Turn off", "", 'data-on="0"')}</div>`)}
@@ -503,6 +503,7 @@ function siteOps({ s }) {
         ${actRow("Restart server services", `Restarts web, workers and nginx for <b>all sites</b> on ${esc(s.server_name)}`, `<button class="btn sm" data-act="oprestart" data-server="${s.server_id}">Restart</button>`)}</div>
       <div class="card pad"><h3>Access &amp; data</h3>
         ${actRow("Back up now", "Database and files; download from Backups", b("opbackup", "Back up"))}
+        <div id="lastrow"><div class="act-row"><div class="t"><b>Restore to last backup</b><span class="faint">Looking for the latest backup…</span></div></div></div>
         ${can("admin") ? actRow("Upload database", "Replace this site's data with a .sql or .sql.gz file", b("opuploaddb", "Upload…")) : ""}
         ${actRow("Reset Administrator password", "Generates a new password", b("opreset", "Reset…"))}
         ${actRow("Add a domain", "Serve this site on another domain too", b("opadddomain", "Add…"))}
@@ -512,12 +513,28 @@ function siteOps({ s }) {
         ${can("admin") ? actRow("Rename site", "Changes the site's domain. A backup is taken first.", b("oprename", "Rename…")) : ""}
         ${actRow("Delete site", can("admin") ? "Removes the site and database from the server" : "Needs an administrator's approval", b("opdelete", can("admin") ? "Delete…" : "Request deletion…", "danger"))}
         ${can("admin") ? actRow("Remove from Fleet Manager", "Only forgets the record here. The site stays on the server.", b("forget", "Remove", "danger")) : ""}</div>`,
+    mount: can("support") ? mountOps : undefined,
   };
 }
 
+const bkLabel = k => { const m = k.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/); return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`).toLocaleString() : k; };
+/** Newest restorable backup (needs a database file) of a site, or null. */
+async function latestBackup(s) {
+  const [items, off] = await Promise.all([api("GET", `/api/sites/${s.id}/backups`).catch(() => []), api("GET", `/api/sites/${s.id}/offsite`).catch(() => [])]);
+  const groups = {};
+  items.forEach(i => { const g = groups[i.name.slice(0, 15)] = groups[i.name.slice(0, 15)] || { id: i.name.slice(0, 15), server: false, offsite: false, db: false }; g.server = true; g.db = g.db || /database\.sql\.gz$/.test(i.name); });
+  (off || []).forEach(i => { const g = groups[i.name.slice(0, 15)] = groups[i.name.slice(0, 15)] || { id: i.name.slice(0, 15), server: false, offsite: false, db: false }; g.offsite = true; g.db = g.db || /database\.sql\.gz$/.test(i.name); });
+  const g = Object.values(groups).filter(x => x.db && /^\d{8}_\d{6}$/.test(x.id)).sort((a, b) => b.id.localeCompare(a.id))[0];
+  return g ? { ...g, label: bkLabel(g.id) } : null;
+}
+function lastBackupRow(s, g, kind) {
+  if (!g) return actRow("Restore to last backup", "No backup exists yet. Take one first.", `<button class="btn sm" data-act="opbackup" data-id="${s.id}">Back up now</button>`);
+  return actRow("Restore to last backup", `Last backup: <b>${esc(g.label)}</b> (${ago(g.id.replace(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/, "$1-$2-$3T$4:$5:$6"))}) · ${g.server ? "on the server" : "offsite only"}`,
+    `<button class="btn sm danger" data-act="restore" data-id="${s.id}" data-g="${esc(JSON.stringify(g))}">${can("admin") ? "Restore…" : "Request restore…"}</button>`);
+}
 function siteBackups({ s }) {
   return {
-    html: `<div class="toolbar"><div style="flex:1" class="muted" id="bkinfo">Backups of this site.</div>${can("admin") ? `<button class="btn" data-act="bkpolicy" data-id="${s.id}">Schedule…</button>` : ""}<button class="btn primary" data-act="opbackup" data-id="${s.id}">${icon("plus")}Back up now</button></div><div class="card tbl" id="bk"><div class="empty faint">Loading…</div></div>
+    html: `<div class="toolbar"><div style="flex:1" class="muted" id="bkinfo">Backups of this site.</div>${can("admin") ? `<button class="btn" data-act="bkpolicy" data-id="${s.id}">Schedule…</button>` : ""}<button class="btn primary" data-act="opbackup" data-id="${s.id}">${icon("plus")}Back up now</button></div><div id="lastbk"></div><div class="card tbl" id="bk"><div class="empty faint">Loading…</div></div>
       <div class="card tbl" id="bkruns" style="margin-top:16px"></div>`,
     async mount(root) {
       const box = $("#bk", root);
@@ -533,6 +550,8 @@ function siteBackups({ s }) {
       (off || []).forEach(i => { const g = groups[key(i.name)] = groups[key(i.name)] || { id: key(i.name), files: [], server: false, offsite: false }; g.offsite = true; });
       const label = k => { const m = k.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/); return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`).toLocaleString() : k; };
       const list = Object.values(groups).sort((x, y) => y.id.localeCompare(x.id));
+      const newest = list.find(g => /^\d{8}_\d{6}$/.test(g.id) && (g.server || g.offsite));
+      if (newest && can("support")) { newest.label = label(newest.id); $("#lastbk", root).innerHTML = `<div class="card pad" style="margin-bottom:16px">${lastBackupRow(s, newest)}</div>`; }
       if (!list.length) box.innerHTML = emptyState("drive", "No backups yet", "Press Back up now to create the first one.");
       else box.innerHTML = `<table><thead><tr><th>Backup</th><th>Where</th><th class="hide-sm">Files</th><th></th></tr></thead><tbody>${list.map(g => { g.label = label(g.id); return `<tr><td><div class="cell-main">${esc(g.label)}</div></td>
         <td>${g.server ? '<span class="chip">Server</span> ' : ""}${g.offsite ? '<span class="chip info">Offsite</span>' : ""}</td>
