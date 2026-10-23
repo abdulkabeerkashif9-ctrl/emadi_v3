@@ -92,3 +92,19 @@ def test_upload_db_is_admin_only(client, sid):
         client.post("/api/team", json={"username": "sue2", "password": "password123", "role": "support"})
     c.post("/api/auth/login", json={"username": "sue2", "password": "password123"})
     assert c.put(f"/api/sites/{sid}/upload-db?filename=d.sql&confirm=apps.example.com", content=b"x").status_code == 403
+
+
+def test_delete_survives_a_dropped_connection_if_the_site_is_gone(client, sid):
+    from fleetmanager import ops
+    FakeRunner.drop_exit = -1                       # command "fails" with exit -1 but the folder is removed
+    j = wait_job(client, __import__("fleetmanager").jobs.start("ops", "drop", lambda log: ops.drop_job(sid, False, log)))
+    assert j["status"] == "done", j["log"]
+    assert "deletion went through" in j["log"] and not db.q1("SELECT 1 FROM sites WHERE id=?", (sid,))
+
+
+def test_delete_reports_failure_if_the_site_is_still_there(client, sid):
+    from fleetmanager import ops
+    FakeRunner.drop_exit, FakeRunner.leftover = 1, "real"
+    j = wait_job(client, __import__("fleetmanager").jobs.start("ops", "drop", lambda log: ops.drop_job(sid, False, log)))
+    assert j["status"] == "failed" and "drop-site failed (exit 1)" in j["log"] and db.q1("SELECT 1 FROM sites WHERE id=?", (sid,))
+    assert sum("drop-site" in c[1] for c in FakeRunner.calls if c[0] == "run") == 2     # one retry

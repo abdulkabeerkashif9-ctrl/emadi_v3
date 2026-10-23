@@ -33,6 +33,7 @@ class FakeRunner:
     def __enter__(self): return self
     def __exit__(self, *a): pass
     def close(self): pass
+    def connect(self): return self
     def write_file(self, path, content, mode=0o644):
         FakeRunner.calls.append(("write", path)); FakeRunner.written[path] = (content, mode)
 
@@ -154,6 +155,8 @@ class FakeRunner:
             d = cmd.split("drop-site ")[1].split()[0]
             if d in FakeRunner.sites:
                 FakeRunner.sites.remove(d)
+            if FakeRunner.drop_exit:
+                return FakeRunner.drop_exit, ""
         elif "bench new-site" in cmd:
             d = cmd.split("new-site ")[1].split()[0]
             FakeRunner.sites.append(d)
@@ -178,6 +181,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.tick = 0
     FakeRunner.site_installed = []
     FakeRunner.no_branch = False
+    FakeRunner.drop_exit = 0
     monkeypatch.setattr(ssh, "Runner", FakeRunner)
     monkeypatch.setattr(provision.ssh, "Runner", FakeRunner)
     monkeypatch.setattr(main.ssh, "Runner", FakeRunner)

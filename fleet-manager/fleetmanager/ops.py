@@ -327,10 +327,33 @@ def drop_job(site_id, backup_first, log):
             if code != 0:
                 raise ssh.SSHError("Backup failed, so the site was NOT deleted.")
         log(f"\n>>> Deleting {site['domain']}\n")
-        code, _ = r.run(_bench(s, f"bench drop-site {shlex.quote(site['domain'])} --force --no-backup --db-root-password {shlex.quote(pw)}"),
-                        as_user=BENCH_USER, stream=False)
+        drop = _bench(s, f"bench drop-site {shlex.quote(site['domain'])} --force --no-backup --db-root-password {shlex.quote(pw)}")
+        site_dir = f"{s['bench_path']}/sites/{site['domain']}"
+
+        def gone(rr):
+            code, _ = rr.run(f"test -d {shlex.quote(site_dir)}", as_user=BENCH_USER, stream=False)
+            return code != 0
+
+        code, out = -1, ""
+        for attempt in (1, 2):
+            try:
+                code, out = r.run(drop, as_user=BENCH_USER, timeout=900)
+            except ssh.SSHError as e:
+                code, out = -1, str(e)
+            if code == 0:
+                break
+            # exit -1 / dropped connection: the command may well have finished. Look at the server before deciding.
+            log(f"\n!! drop-site ended with exit {code}; checking what happened on the server…\n")
+            r.close()
+            r.connect()
+            if gone(r):
+                log("The site folder is gone, so the deletion went through.\n")
+                code = 0
+                break
+            if attempt == 1:
+                log("The site is still there; trying once more.\n")
         if code != 0:
-            raise ssh.SSHError(f"drop-site failed (exit {code})")
+            raise ssh.SSHError(f"drop-site failed (exit {code}). {out.strip()[-400:]}")
         db.x("DELETE FROM site_notes WHERE site_id=?", (site_id,))
         db.x("DELETE FROM sites WHERE id=?", (site_id,))
         try:
