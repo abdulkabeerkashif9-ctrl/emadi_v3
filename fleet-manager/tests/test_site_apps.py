@@ -108,3 +108,38 @@ def test_delete_reports_failure_if_the_site_is_still_there(client, sid):
     j = wait_job(client, __import__("fleetmanager").jobs.start("ops", "drop", lambda log: ops.drop_job(sid, False, log)))
     assert j["status"] == "failed" and "drop-site failed (exit 1)" in j["log"] and db.q1("SELECT 1 FROM sites WHERE id=?", (sid,))
     assert sum("drop-site" in c[1] for c in FakeRunner.calls if c[0] == "run") == 2     # one retry
+
+
+def test_uninstall_app_backs_up_removes_and_updates_the_site(client, sid):
+    wait_job(client, client.post(f"/api/sites/{sid}/install-apps", json={"apps": ["hrms"]}).json()["job_id"])
+    assert "hrms" in db.q1("SELECT apps FROM sites WHERE id=?", (sid,))["apps"]
+    assert client.post(f"/api/sites/{sid}/uninstall-app", json={"app": "hrms", "confirm": "nope"}).status_code == 400
+    assert client.post(f"/api/sites/{sid}/uninstall-app", json={"app": "frappe", "confirm": "frappe"}).status_code == 400
+    db.x("UPDATE sites SET apps='' WHERE id!=?", (sid,))           # other tests' sites must not look like users of hrms
+    j = wait_job(client, client.post(f"/api/sites/{sid}/uninstall-app", json={"app": "hrms", "confirm": "hrms", "remove_from_server": True}).json()["job_id"])
+    assert j["status"] == "done", j["log"]
+    cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
+    i = next(i for i, c in enumerate(cmds) if "uninstall-app hrms" in c and "--yes" in c)
+    assert any("backup --with-files" in c for c in cmds[:i]) and any("bench remove-app hrms" in c for c in cmds[i:])
+    assert "hrms" not in db.q1("SELECT apps FROM sites WHERE id=?", (sid,))["apps"]
+
+
+def test_uninstall_refused_when_another_app_needs_it_or_server_removal_when_shared(client, sid):
+    wait_job(client, client.post(f"/api/sites/{sid}/install-apps", json={"apps": ["hrms"]}).json()["job_id"])
+    FakeRunner.site_installed.append("erpnext")
+    j = wait_job(client, client.post(f"/api/sites/{sid}/uninstall-app", json={"app": "erpnext", "confirm": "erpnext"}).json()["job_id"])
+    assert j["status"] == "failed" and "Remove hrms first" in j["log"]
+    srv = db.q1("SELECT server_id FROM sites WHERE id=?", (sid,))["server_id"]
+    db.x("DELETE FROM sites WHERE domain='other.example.com'")
+    db.x("INSERT OR REPLACE INTO sites(server_id,domain,apps,status,admin_pw_enc) VALUES(?,?,?,?,?)", (srv, "other.example.com", "hrms", "up", security.encrypt("x")))
+    j = wait_job(client, client.post(f"/api/sites/{sid}/uninstall-app", json={"app": "hrms", "confirm": "hrms", "remove_from_server": True}).json()["job_id"])
+    assert j["status"] == "failed" and "other.example.com" in j["log"]
+    db.x("DELETE FROM sites WHERE domain='other.example.com'")
+
+
+def test_uninstall_is_admin_only(client, sid):
+    c = TestClient(main.app)
+    if not db.q1("SELECT 1 FROM users WHERE username='sue3'"):
+        client.post("/api/team", json={"username": "sue3", "password": "password123", "role": "support"})
+    c.post("/api/auth/login", json={"username": "sue3", "password": "password123"})
+    assert c.post(f"/api/sites/{sid}/uninstall-app", json={"app": "hrms", "confirm": "hrms"}).status_code == 403

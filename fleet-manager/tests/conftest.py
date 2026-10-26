@@ -136,6 +136,13 @@ class FakeRunner:
             n = cmd.split("bench new-app ")[1].split()[0].strip("'")
             if n not in FakeRunner.apps:
                 FakeRunner.apps.append(n)
+        elif "uninstall-app" in cmd:
+            n = shlex.split(cmd.split("uninstall-app ")[1])[0]
+            if n in FakeRunner.site_installed: FakeRunner.site_installed.remove(n)
+            FakeRunner.site_uninstalled.append(n)
+        elif "bench remove-app" in cmd:
+            n = shlex.split(cmd.split("remove-app ")[1])[0]
+            if n in FakeRunner.apps: FakeRunner.apps.remove(n)
         elif "install-app" in cmd:
             n = shlex.split(cmd.split("install-app ")[1])[0]
             FakeRunner.site_installed.append(n)
@@ -182,6 +189,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.site_installed = []
     FakeRunner.no_branch = False
     FakeRunner.drop_exit = 0
+    FakeRunner.site_uninstalled = []
     monkeypatch.setattr(ssh, "Runner", FakeRunner)
     monkeypatch.setattr(provision.ssh, "Runner", FakeRunner)
     monkeypatch.setattr(main.ssh, "Runner", FakeRunner)

@@ -617,9 +617,11 @@ function siteApps({ s, srv, apps }) {
       try { info = await api("GET", `/api/sites/${s.id}/apps`); } catch (e) { $("#appinfo", root).textContent = e.message; return; }
       if (!$("#appbox", root)) return;
       const rows = info.installed.filter(a => a.name !== "frappe").concat(info.installed.filter(a => a.name === "frappe"));
-      $("#appbox", root).innerHTML = `<table><thead><tr><th style="width:36px"></th><th>App</th><th>Version</th><th>Status</th></tr></thead><tbody>${rows.map(a => `<tr><td><input type="checkbox" class="appck" value="${esc(a.name)}" aria-label="Select ${esc(a.title)}" ${a.behind ? "checked" : ""}></td>
+      $("#appbox", root).innerHTML = `<table><thead><tr><th style="width:36px"></th><th>App</th><th>Version</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(a => `<tr><td><input type="checkbox" class="appck" value="${esc(a.name)}" aria-label="Select ${esc(a.title)}" ${a.behind ? "checked" : ""}></td>
         <td><div class="cell-main">${esc(a.title)}</div><div class="cell-sub mono">${esc(a.name)}</div></td><td class="mono">${esc(a.version || "—")}<div class="cell-sub">${esc(a.branch || "")} ${esc(a.commit || "")}</div></td>
-        <td>${a.behind ? `<span class="chip warn">${a.behind} update${a.behind > 1 ? "s" : ""} available</span>` : '<span class="chip ok">Up to date</span>'}</td></tr>`).join("")}</tbody></table>`;
+        <td>${a.behind ? `<span class="chip warn">${a.behind} update${a.behind > 1 ? "s" : ""} available</span>` : '<span class="chip ok">Up to date</span>'}</td>
+        <td style="text-align:right">${can("admin") && a.name !== "frappe" ? `<button class="btn sm danger rmapp" data-n="${esc(a.name)}" data-t="${esc(a.title)}">Remove…</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
+      $$(".rmapp", root).forEach(b => b.onclick = () => removeAppDialog(s, b.dataset.n, b.dataset.t));
       const n = info.installed.filter(a => a.behind).length;
       $("#appinfo", root).textContent = n ? `${n} app${n > 1 ? "s have" : " has"} updates available.` : "Everything is up to date.";
       const upd = $("#appupd", root), cks = () => $$(".appck", root).filter(c => c.checked).map(c => c.value);
@@ -661,6 +663,14 @@ function uploadDbDialog(s) {
     x.onerror = () => { toast("Upload failed: connection lost", true); d.close(); };
     x.send(f);
   };
+}
+function removeAppDialog(s, name, title) {
+  const d = dialog("Remove app", `<div class="note warn" style="margin-top:0">This <b>uninstalls ${esc(title)}</b> from ${esc(s.domain)}. <b>Its data on this site is deleted</b> (a backup is taken first so it can be restored).</div>
+    <label class="check"><input type="checkbox" id="rs"><div><b>Also delete the app's code from the server</b><div class="hint">Only possible when no other site on ${esc(s.server_name)} uses it. Leave unticked if unsure.</div></div></label>
+    <label class="l">Type <b>${esc(name)}</b> to confirm</label><input id="cf" autocomplete="off" spellcheck="false">`,
+    `<button class="btn" data-close>Cancel</button><button class="btn danger" id="go" disabled>Remove app</button>`, { noFocus: true });
+  $("#cf", d).oninput = () => { $("#go", d).disabled = $("#cf", d).value.trim() !== name; };
+  $("#go", d).onclick = e => busy(e.currentTarget, async () => { const r = await api("POST", `/api/sites/${s.id}/uninstall-app`, { app: name, confirm: $("#cf", d).value.trim(), remove_from_server: $("#rs", d).checked }); d.close(); startJob(r.job_id, `Remove ${name} from ${s.domain}`); });
 }
 function installAppDialog(s, avail) {
   if (!avail.length) { dialog("Install app", `<p class="muted" style="margin:0">Every app in the registry is already installed on this site. Add more under <a href="#/apps" style="text-decoration:underline" data-close>Apps</a>.</p>`, `<button class="btn primary" data-close>OK</button>`, { noFocus: true }); return; }

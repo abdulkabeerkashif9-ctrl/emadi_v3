@@ -223,6 +223,39 @@ def install_apps_job(site_id, names, log):
     log("\nApps installed.\n")
 
 
+def uninstall_app_job(site_id, name, remove_from_server, log):
+    site, s = get(site_id)
+    domain = site["domain"]
+    if not NAME_RE.match(name or "") or name == "frappe":
+        raise OpError("That app cannot be removed")
+    with ssh.Runner(s, log) as r:
+        installed = set(provision.site_apps(s, r, domain))
+        if name not in installed:
+            raise ssh.SSHError(f"{name} is not installed on {domain}")
+        needed_by = [a["name"] for a in db.q("SELECT name, requires FROM apps") if name in (a["requires"] or "").split(",") and a["name"] in installed]
+        if needed_by:
+            raise ssh.SSHError(f"Remove {', '.join(needed_by)} first: it needs {name}")
+        used_elsewhere = [x["domain"] for x in db.q("SELECT domain, apps FROM sites WHERE server_id=? AND id!=?", (s["id"], site_id)) if name in (x["apps"] or "").split(",")]
+        if remove_from_server and used_elsewhere:
+            raise ssh.SSHError(f"{name} is also installed on {', '.join(used_elsewhere)}, so it cannot be removed from the server")
+        log(f">>> Backing up {domain} before removing {name}\n")
+        _run(r, s, domain, "backup --with-files", "Safety backup")
+        log(f"\n>>> Uninstalling {name} from {domain}\n")
+        code, _ = r.run(_site_cmd(s, domain, f"uninstall-app {shlex.quote(name)} --yes --no-backup"), as_user=BENCH_USER)
+        if code != 0:
+            raise ssh.SSHError(f"uninstall-app {name} failed (exit {code}). The site keeps running; the backup from before is on the Backups tab.")
+        if remove_from_server:
+            log(f"\n>>> Removing {name} from the server\n")
+            code, _ = r.run(_bench(s, f"bench remove-app {shlex.quote(name)} --force"), as_user=BENCH_USER)
+            if code != 0:
+                raise ssh.SSHError(f"The app was uninstalled from the site, but removing it from the server failed (exit {code})")
+        r.run(_site_cmd(s, domain, "clear-cache"), as_user=BENCH_USER, stream=False)
+        r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
+        provision.sync_server(s, r, log)
+        _store_apps(s, r, site)
+    log(f"\n{name} removed from {domain}" + (" and from the server." if remove_from_server else ". Its code is still on the server.") + "\n")
+
+
 def update_apps_job(site_id, names, log):
     """Pull the latest code of the given apps (bench-wide: the code is shared by every site on the server),
     then migrate this site. Other sites on the server pick up the new code on their next migrate."""

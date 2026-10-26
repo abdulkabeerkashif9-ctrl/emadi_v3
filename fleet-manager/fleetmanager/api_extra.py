@@ -510,3 +510,20 @@ async def site_upload_db(sid: int, request: Request, filename: str, confirm: str
         raise
     audit(u, "site_upload_db", s["domain"], f"{filename} ({total >> 20} MB)", request)
     return {"job_id": jobs.start("ops", f"Upload database to {s['domain']}", lambda log: backups.upload_db_job(sid, str(path), filename, log), u["username"])}
+
+
+class UninstallIn(BaseModel):
+    app: str
+    confirm: str
+    remove_from_server: bool = False
+
+
+@router.post("/sites/{sid}/uninstall-app")
+def site_uninstall_app(sid: int, b: UninstallIn, request: Request, u=Depends(need("admin"))):
+    s = _site(sid)
+    if not ops.NAME_RE.match(b.app) or b.app == "frappe":
+        raise HTTPException(400, "That app cannot be removed")
+    if b.confirm.strip() != b.app:
+        raise HTTPException(400, "Type the app's name exactly to confirm")
+    audit(u, "site_uninstall_app", s["domain"], b.app + (" (+ server)" if b.remove_from_server else ""), request)
+    return {"job_id": jobs.start("ops", f"Remove {b.app} from {s['domain']}", lambda log: ops.uninstall_app_job(sid, b.app, b.remove_from_server, log), u["username"])}
