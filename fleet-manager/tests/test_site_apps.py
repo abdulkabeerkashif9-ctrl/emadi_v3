@@ -158,3 +158,10 @@ def test_remove_app_from_server_only_when_no_site_uses_it(client, sid):
     j = wait_job(client, client.post(url, json={"app": "lonely_app", "confirm": "lonely_app"}).json()["job_id"])
     assert j["status"] == "done", j["log"]
     assert "lonely_app" not in FakeRunner.apps
+
+
+def test_get_app_failure_names_the_missing_dependency_not_the_branch(client, sid):
+    db.x("INSERT OR REPLACE INTO apps(name,title,git_url,branch,requires) VALUES('garm','Garm','https://github.com/x/garm.git','main','')")
+    FakeRunner.build_broken = True
+    j = wait_job(client, client.post(f"/api/sites/{sid}/install-apps", json={"apps": ["garm"]}).json()["job_id"])
+    assert j["status"] == "failed" and "emadi_v3" in j["log"] and "no branch" not in j["log"]

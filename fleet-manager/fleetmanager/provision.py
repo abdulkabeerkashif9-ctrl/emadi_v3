@@ -380,8 +380,16 @@ def get_app(s, r, name, log):
             log(f"\n>>> Branch {branch} does not exist in this repository; using its default branch '{alt}' instead\n")
             code, out = r.run(cmd(alt), as_user=BENCH_USER)
     if code != 0:
-        raise ssh.SSHError(f"bench get-app failed for {name} (exit {code}). Check the git URL and branch of this app under Apps"
-                           f"{' (this repository has no branch ' + repr(branch) + ' - set its real branch there)' if not a['branch'] else ''}.")
+        missing = re.search(r"No module named '([A-Za-z0-9_]+)'", out)
+        cloned = "Installing " in out or "Ignoring dependencies" in out
+        if missing and cloned:
+            raise ssh.SSHError(
+                f"{name} was downloaded, but the build failed because another app on this server needs the Python module '{missing.group(1)}', "
+                f"which is not installed here (see 'Could not find app' in the log above). Add the app that provides '{missing.group(1)}' under Apps, "
+                f"install it on this server (Server → Install apps), or remove the broken app, then try again.")
+        if re.search(r"remote branch .* not found|Could not find remote branch", out):
+            raise ssh.SSHError(f"bench get-app failed for {name}: this repository has no branch '{branch}'. Set its real branch under Apps.")
+        raise ssh.SSHError(f"bench get-app failed for {name} (exit {code}). Check the git URL and branch of this app under Apps, and the log above.")
     db.x("INSERT OR IGNORE INTO server_apps VALUES(?,?)", (s["id"], name))
 
 

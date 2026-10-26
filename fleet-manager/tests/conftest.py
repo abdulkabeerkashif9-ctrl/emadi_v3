@@ -152,6 +152,8 @@ class FakeRunner:
             out = "['Old Co']\n" if "--site old.example.com" in cmd else "[]\n"   # no Company until setup wizard
         elif "ls-remote --symref" in cmd:
             out = "ref: refs/heads/main\tHEAD\nabc\tHEAD\n"
+        elif "get-app" in cmd and FakeRunner.build_broken:
+            return 1, "Installing x\nCould not find app \"mjfsd_v3\": \nNo module named 'emadi_v3'\nERROR: bench build"
         elif "get-app" in cmd and FakeRunner.no_branch and "--branch version-" in cmd:
             return 1, "Remote branch version-15 not found"
         elif "get-app" in cmd:
@@ -188,6 +190,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.tick = 0
     FakeRunner.site_installed = []
     FakeRunner.no_branch = False
+    FakeRunner.build_broken = False
     FakeRunner.drop_exit = 0
     FakeRunner.site_uninstalled = []
     monkeypatch.setattr(ssh, "Runner", FakeRunner)
