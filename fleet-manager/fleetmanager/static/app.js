@@ -317,6 +317,14 @@ const ACT = {
   bkpolicy: el => busy(null, () => policyDialog(el.dataset.id ? +el.dataset.id : null)),
   restore: el => restoreDialog(siteById(el.dataset.id), JSON.parse(el.dataset.g)),
   opmove: el => moveDialog(siteById(el.dataset.id)),
+  rmsrvapp: el => {
+    const srv = S.servers.find(x => x.id === +el.dataset.id), name = el.dataset.n;
+    const d = dialog("Delete app from server", `<div class="note warn" style="margin-top:0">This deletes <b class="mono">${esc(name)}</b>'s code from <b>${esc(srv.name)}</b>. It only works when <b>no site</b> on this server has the app installed; remove it from those sites first (Site → Apps → Remove).</div>
+      <label class="l">Type <b>${esc(name)}</b> to confirm</label><input id="cf" autocomplete="off" spellcheck="false">`,
+      `<button class="btn" data-close>Cancel</button><button class="btn danger" id="go" disabled>Delete from server</button>`, { noFocus: true });
+    $("#cf", d).oninput = () => { $("#go", d).disabled = $("#cf", d).value.trim() !== name; };
+    $("#go", d).onclick = e => busy(e.currentTarget, async () => { const r = await api("POST", `/api/servers/${srv.id}/remove-app`, { app: name, confirm: $("#cf", d).value.trim() }); d.close(); startJob(r.job_id, `Remove ${name} from ${srv.name}`); });
+  },
   opuploaddb: el => uploadDbDialog(siteById(el.dataset.id)),
   emptyapp: el => busy(null, async () => {
     const s = siteById(el.dataset.id), name = emptyAppName(s.domain);
@@ -855,10 +863,10 @@ async function pServer(id, tab = "overview") {
     body = "";
   } else if (tab === "apps") {
     const avail = S.apps.filter(a => !s.apps.includes(a.name));
-    body = `<div class="card tbl"><table><thead><tr><th>App</th><th>Status</th></tr></thead><tbody>
-      <tr><td><div class="cell-main">Frappe Framework</div><div class="cell-sub mono">frappe</div></td><td><span class="chip ok">Installed</span></td></tr>
-      ${s.apps.map(n => { const a = S.apps.find(x => x.name === n); return `<tr><td><div class="cell-main">${esc(a ? a.title : n)}</div><div class="cell-sub mono">${esc(n)}</div></td><td><span class="chip ok">Installed</span></td></tr>`; }).join("")}
-      ${avail.map(a => `<tr><td><div class="cell-main faint">${esc(a.title || a.name)}</div><div class="cell-sub mono">${esc(a.name)}</div></td><td><span class="chip">Not installed</span></td></tr>`).join("")}</tbody></table></div>`;
+    body = `<div class="card tbl"><table><thead><tr><th>App</th><th>Status</th><th></th></tr></thead><tbody>
+      <tr><td><div class="cell-main">Frappe Framework</div><div class="cell-sub mono">frappe</div></td><td><span class="chip ok">Installed</span></td><td></td></tr>
+      ${s.apps.map(n => { const a = S.apps.find(x => x.name === n); return `<tr><td><div class="cell-main">${esc(a ? a.title : n)}</div><div class="cell-sub mono">${esc(n)}</div></td><td><span class="chip ok">Installed</span></td><td style="text-align:right">${can("admin") && n !== "frappe" ? `<button class="btn sm danger" data-act="rmsrvapp" data-id="${s.id}" data-n="${esc(n)}">Delete from server…</button>` : ""}</td></tr>`; }).join("")}
+      ${avail.map(a => `<tr><td><div class="cell-main faint">${esc(a.title || a.name)}</div><div class="cell-sub mono">${esc(a.name)}</div></td><td><span class="chip">Not installed</span></td><td></td></tr>`).join("")}</tbody></table></div>`;
   } else if (tab === "sites") {
     body = `<div class="card tbl">${sites.length ? `<table><thead><tr><th>Site</th><th>Status</th><th class="hide-sm">Apps</th></tr></thead><tbody>${sites.map(x => `<tr data-href="#/sites/${x.id}" tabindex="0"><td><div class="cell-main">${esc(x.domain)}</div><div class="cell-sub">${esc(x.company || "—")}</div></td><td>${badge(x.status)}</td><td class="hide-sm faint">${esc((x.apps || "").split(",").filter(Boolean).join(", "))}</td></tr>`).join("")}</tbody></table>` : emptyState("globe", "No sites on this server", "Sites you create here will be listed.", `<a class="btn primary" href="#/new-site">${icon("plus")}New Site</a>`)}</div>`;
   } else if (tab === "activity") {

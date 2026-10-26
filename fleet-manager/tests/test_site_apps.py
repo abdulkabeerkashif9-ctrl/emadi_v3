@@ -143,3 +143,18 @@ def test_uninstall_is_admin_only(client, sid):
         client.post("/api/team", json={"username": "sue3", "password": "password123", "role": "support"})
     c.post("/api/auth/login", json={"username": "sue3", "password": "password123"})
     assert c.post(f"/api/sites/{sid}/uninstall-app", json={"app": "hrms", "confirm": "hrms"}).status_code == 403
+
+
+def test_remove_app_from_server_only_when_no_site_uses_it(client, sid):
+    srv = db.q1("SELECT server_id FROM sites WHERE id=?", (sid,))["server_id"]
+    FakeRunner.apps.append("lonely_app")
+    url = f"/api/servers/{srv}/remove-app"
+    assert client.post(url, json={"app": "lonely_app", "confirm": "x"}).status_code == 400
+    assert client.post(url, json={"app": "frappe", "confirm": "frappe"}).status_code == 400
+    FakeRunner.site_installed.append("lonely_app")                     # a site still has it
+    j = wait_job(client, client.post(url, json={"app": "lonely_app", "confirm": "lonely_app"}).json()["job_id"])
+    assert j["status"] == "failed" and "still installed on" in j["log"]
+    FakeRunner.site_installed.clear()
+    j = wait_job(client, client.post(url, json={"app": "lonely_app", "confirm": "lonely_app"}).json()["job_id"])
+    assert j["status"] == "done", j["log"]
+    assert "lonely_app" not in FakeRunner.apps

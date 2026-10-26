@@ -256,6 +256,30 @@ def uninstall_app_job(site_id, name, remove_from_server, log):
     log(f"\n{name} removed from {domain}" + (" and from the server." if remove_from_server else ". Its code is still on the server.") + "\n")
 
 
+def remove_server_app_job(server_id, name, log):
+    """Delete an app's code from the VPS (bench remove-app). Refused while any site on the server has it installed."""
+    s = db.q1("SELECT * FROM servers WHERE id=?", (server_id,))
+    if not s or s["status"] != "ready":
+        raise OpError("The server is not ready")
+    if not NAME_RE.match(name or "") or name == "frappe":
+        raise OpError("That app cannot be removed")
+    with ssh.Runner(s, log) as r:
+        if name not in set(provision.list_bench_apps(s, r)):
+            raise ssh.SSHError(f"{name} is not on {s['name']}")
+        users = [x["domain"] for x in db.q("SELECT domain FROM sites WHERE server_id=? AND status!='creating'", (server_id,))
+                 if name in provision.site_apps(s, r, x["domain"])]
+        users += [d for d in provision.list_bench_sites(s, r) if d not in users and d != "assets" and name in provision.site_apps(s, r, d)]
+        if users:
+            raise ssh.SSHError(f"{name} is still installed on {', '.join(users)}. Remove it from those sites first (Site → Apps → Remove).")
+        log(f">>> Removing {name} from {s['name']}\n")
+        code, _ = r.run(_bench(s, f"bench remove-app {shlex.quote(name)} --force"), as_user=BENCH_USER)
+        if code != 0:
+            raise ssh.SSHError(f"bench remove-app {name} failed (exit {code})")
+        r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
+        provision.sync_server(s, r, log)
+    log(f"\n{name} removed from {s['name']}.\n")
+
+
 def update_apps_job(site_id, names, log):
     """Pull the latest code of the given apps (bench-wide: the code is shared by every site on the server),
     then migrate this site. Other sites on the server pick up the new code on their next migrate."""

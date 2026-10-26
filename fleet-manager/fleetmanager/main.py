@@ -242,6 +242,24 @@ def server_install_apps(sid: int, b: AppNames, request: Request, u=Depends(need(
                                  lambda log: provision.install_apps_on_server(sid, names, log), u["username"])}
 
 
+class RemoveServerApp(BaseModel):
+    app: str
+    confirm: str
+
+
+@app.post("/api/servers/{sid}/remove-app")
+def server_remove_app(sid: int, b: RemoveServerApp, request: Request, u=Depends(need("admin"))):
+    s = _get_server(sid)
+    if s["status"] != "ready":
+        raise HTTPException(409, "Server is not ready")
+    if not ops.NAME_RE.match(b.app) or b.app == "frappe":
+        raise HTTPException(400, "That app cannot be removed")
+    if b.confirm.strip() != b.app:
+        raise HTTPException(400, "Type the app's name exactly to confirm")
+    audit(u, "server_remove_app", s["name"], b.app, request)
+    return {"job_id": jobs.start("apps", f"Remove {b.app} from {s['name']}", lambda log: ops.remove_server_app_job(sid, b.app, log), u["username"])}
+
+
 # ------------------------------------------------------------------ apps registry
 class AppIn(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{1,60}$")   # python module name of the app
