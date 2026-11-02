@@ -8,8 +8,7 @@
    "dt": "Weaving Contract",
    "hidden": 1,
    "read_only": 1,
-   "no_copy": 1,
-   "description": "Internal - JSON record of exactly which Sales Order Item row(s) this contract's Order Qty was drawn from and how much, so cancelling releases precisely that back. Written on submit by allocate_sales_order_balance()."
+   "no_copy": 1
   }
  ],
  "custom_perms": [],

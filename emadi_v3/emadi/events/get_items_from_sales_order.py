@@ -65,9 +65,26 @@ def get_weaving_items_from_sales_order(sales_order, item_code):
 
 
 @frappe.whitelist()
-def create_weaving_contract_from_sales_order(sales_order, item_code):
+def create_weaving_contract_from_sales_order(sales_order, item_code=None):
 	"""Sales Order -> Weaving Contract button: unsaved draft, prefilled with
 	the same data as the picker above, routed to by the browser."""
+	multi = _get_multi_item_data(sales_order) if not item_code else None
+	if multi:
+		# Several unique items on the Sales Order: one Commercial, Multi Item contract
+		wc = frappe.new_doc("Weaving Contract")
+		wc.sales_order = sales_order
+		wc.sales_order_item = multi["sales_order_item"]
+		wc.type = "Commercial"
+		wc.multi_item_weaving_contract = 1
+		for row in multi["finish_items"]:
+			wc.append("finish_items", row)
+		for row in multi["bom_items"]:
+			wc.append("bom_items", row)
+		return wc
+
+	if not item_code:
+		frappe.throw(_("Select a Finish Item."))
+
 	data = _get_weaving_data_from_sales_order(sales_order, item_code)
 
 	wc = frappe.new_doc("Weaving Contract")
@@ -154,3 +171,61 @@ def _get_weaving_data_from_sales_order(sales_order, item_code):
 		"gross_weight": gross_weight,
 		"bom_items": bom_items,
 	}
+
+
+def _get_multi_item_data(sales_order):
+	"""Several unique finish items on one Sales Order become ONE Commercial,
+	Multi Item Weaving Contract: a Finish Items row per item (Order Qty, Finish
+	Weight and Greige Weight from the item's Towel Costing Sheet) and BOM Items
+	rows tagged with their Finish Item. Returns None when the Sales Order has
+	fewer than two weavable items (the normal single item flow applies)."""
+	from emadi_v3.emadiv3.doctype.weaving_contract.weaving_contract import get_gsm_from_tcs
+
+	items = get_sales_order_items(sales_order)
+	if len(items) < 2:
+		return None
+
+	finish_items = []
+	bom_items = []
+	sales_order_item = None
+	for item in items:
+		data = _get_weaving_data_from_sales_order(sales_order, item["item_code"])
+		sales_order_item = sales_order_item or data["sales_order_item"]
+		gross_weight = flt(data["gross_weight"])
+		order_qty = flt(data["order_qty"])
+		finish_items.append(
+			{
+				"finish_item": item["item_code"],
+				"gsm": get_gsm_from_tcs(data["towel_costing_sheet"], item["item_code"]),
+				"finish_weight": flt(data["finish_weight"]),
+				"gross_weight": gross_weight,
+				"order_qty": order_qty,
+			}
+		)
+		for row in data["bom_items"]:
+			row = dict(row)
+			row["finish_item"] = item["item_code"]
+			# Commercial formula (same as Weaving Contract's save-time one)
+			row["yarn_qty"] = (
+				(gross_weight * order_qty / 1000)
+				* 2.2046
+				* flt(row.get("ratio"))
+				/ 100
+				* (1 + flt(row.get("weaving_wastage")) / 100)
+			)
+			if flt(row.get("lbs_per_bag")):
+				row["required_bags"] = row["yarn_qty"] / flt(row["lbs_per_bag"])
+			bom_items.append(row)
+
+	return {
+		"sales_order_item": sales_order_item,
+		"finish_items": finish_items,
+		"bom_items": bom_items,
+	}
+
+
+@frappe.whitelist()
+def get_multi_item_weaving_data(sales_order):
+	"""Weaving Contract's own "Get Items From > Sales Order": the payload for a
+	multi item contract, or None if the Sales Order has a single weavable item."""
+	return _get_multi_item_data(sales_order)

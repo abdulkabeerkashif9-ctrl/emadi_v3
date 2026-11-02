@@ -8,16 +8,14 @@
    "dt": "Weaving Contract",
    "hidden": 1,
    "read_only": 1,
-   "no_copy": 1,
-   "description": "Internal - JSON record of exactly which Sales Order Item row(s) this contract's Order Qty was drawn from and how much, so cancelling releases precisely that back. Written on submit by allocate_sales_order_balance()."
+   "no_copy": 1
   },
   {
    "fieldname": "weaving_rate_per_lbs",
    "fieldtype": "Currency",
    "label": "Weaving Rate Per Lbs",
-   "insert_after": "weaving_rate_per_meter",
-   "dt": "Weaving Contract",
-   "description": "Added 2026-09-15 - replaces Weaving Rate Per Pick / Weaving Rate Per Meter as the rate this Weaving Contract is charged at. Used by the Weaving Receipt's Manufacture Stock Entry to compute the finished item's basic rate and the new Per LBS Rate field."
+   "insert_after": "rate_section",
+   "dt": "Weaving Contract"
   }
  ],
  "custom_perms": [],

@@ -1,5 +1,6 @@
 import frappe
 from frappe import _
+from frappe.utils import flt
 
 
 @frappe.whitelist()
@@ -26,6 +27,17 @@ def create_sizing_program_from_weaving_contract(weaving_contract, item=None, bea
 			_("No Pile/Ground item with a Yarn Count found in this Weaving Contract's BOM Items.")
 		)
 
+	# Sizing Program covers the whole pending LBS of this Pile/Ground yarn:
+	# every BOM row of the same yarn is added together, minus what earlier
+	# Sizing Programs already took.
+	pending = _get_pending(wc, row.get("for"), row.get("yarn_count"))
+	if pending["pending"] <= 0.001:
+		frappe.throw(
+			_("A Sizing Program has already been created for the full LBS of {0} ({1}).").format(
+				row.get("yarn_count"), row.get("for")
+			)
+		)
+
 	sizing_program = frappe.new_doc("Sizing Program")
 	sizing_program.weaving_contract = wc.name
 	sizing_program.sales_order = wc.get("sales_order")
@@ -38,16 +50,85 @@ def create_sizing_program_from_weaving_contract(weaving_contract, item=None, bea
 	sizing_program.quality = wc.get("construction")
 	# "Brand" - the yarn item picked in the popup.
 	sizing_program.item = row.get("yarn_count")
+	sizing_program.lbs_issue = pending["pending"]
 	# "Item Name" (item_returnable) - the Beam item this same Weaving Contract
 	# already auto-created on its own submit (create_beam_items in
 	# weaving_contract.py uses the identical BEAM-{for}-{yarn_count} naming),
 	# so it's guaranteed to exist by the time this button is clickable
 	# (docstatus == 1). Flagged as a judgment call.
-	beam_item_code = f"BEAM-{row.get('for')}-{row.get('yarn_count')}"
+	beam_item_code = _beam_item_code(row.get("for"), row.get("yarn_count"))
 	if frappe.db.exists("Item", beam_item_code):
 		sizing_program.item_returnable = beam_item_code
 
+	# Yarn Details row (a Sizing Program can hold many finish items / yarns /
+	# contracts - add more rows by hand, giving rows that share one beam the
+	# same Sizing Beam).
+	sizing_program.append(
+		"yarn_items",
+		{
+			"weaving_contract": wc.name,
+			"finish_item": wc.get("construction"),
+			"yarn_item": row.get("yarn_count"),
+			"lbs_per_bag": flt(row.get("lbs_per_bag")) or 100,
+			"lbs_issue": pending["pending"],
+		},
+	)
+
 	return sizing_program
+
+
+def _beam_item_code(beam_for, yarn_count):
+	return f"BEAM-{beam_for}-{yarn_count}"
+
+
+def _get_pending(wc, beam_for, yarn_count):
+	"""Total LBS of this (Pile/Ground, yarn) across the contract's BOM Items,
+	how much existing Sizing Programs already issued, and what is left."""
+	total = sum(
+		flt(r.get("yarn_qty"))
+		for r in wc.bom_items or []
+		if r.get("for") == beam_for and (r.get("yarn_count") or "").strip() == (yarn_count or "").strip()
+	)
+	# Old-style programs (single yarn in the header) ...
+	issued = frappe.db.sql(
+		"""
+		select coalesce(sum(lbs_issue), 0)
+		from `tabSizing Program` sp
+		where weaving_contract = %s and item = %s and item_returnable = %s and docstatus != 2
+		and not exists (select 1 from `tabSizing Program Yarn` y where y.parent = sp.name)
+		""",
+		(wc.name, yarn_count, _beam_item_code(beam_for, yarn_count)),
+	)[0][0]
+	# ... plus programs using the Yarn Details table (row's own contract).
+	issued += frappe.db.sql(
+		"""
+		select coalesce(sum(y.lbs_issue), 0)
+		from `tabSizing Program Yarn` y
+		inner join `tabSizing Program` sp on sp.name = y.parent and y.parenttype = 'Sizing Program'
+		where y.weaving_contract = %s and y.yarn_item = %s and sp.item_returnable = %s and sp.docstatus != 2
+		""",
+		(wc.name, yarn_count, _beam_item_code(beam_for, yarn_count)),
+	)[0][0]
+	return {"total": total, "issued": flt(issued), "pending": max(0.0, total - flt(issued))}
+
+
+@frappe.whitelist()
+def get_sizing_program_items(weaving_contract):
+	"""Pile/Ground yarns that still need a Sizing Program, for the popup. The
+	same yarn on several BOM rows is listed once with the rows' LBS added
+	together; a yarn drops out once its full LBS has a Sizing Program."""
+	wc = frappe.get_doc("Weaving Contract", weaving_contract)
+	seen = []
+	out = []
+	for r in wc.bom_items or []:
+		key = (r.get("for"), (r.get("yarn_count") or "").strip())
+		if r.get("for") not in ("Pile", "Ground") or not key[1] or key in seen:
+			continue
+		seen.append(key)
+		data = _get_pending(wc, *key)
+		if data["pending"] > 0.001:
+			out.append({"for": key[0], "yarn_count": key[1], **data})
+	return out
 
 
 def _pick_bom_row(wc, item, beam_for):

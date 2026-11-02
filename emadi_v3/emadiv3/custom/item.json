@@ -487,6 +487,24 @@
    "translatable": 1,
    "unique": 0,
    "width": null
+  },
+  {
+   "dt": "Item",
+   "doctype": "Custom Field",
+   "name": "Item-custom_no_of_pick",
+   "fieldname": "custom_no_of_pick",
+   "fieldtype": "Float",
+   "label": "No. of Pick",
+   "insert_after": "custom_panna"
+  },
+  {
+   "dt": "Item",
+   "doctype": "Custom Field",
+   "name": "Item-custom_panel",
+   "fieldname": "custom_panel",
+   "fieldtype": "Int",
+   "label": "Panel",
+   "insert_after": "custom_no_of_pick"
   }
  ],
  "custom_perms": [],

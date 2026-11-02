@@ -8,26 +8,32 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "naming_series",
+  "section_details",
   "date",
   "weaver",
+  "customer",
+  "column_break_gfc3m",
+  "type",
+  "multi_item_weaving_contract",
+  "custom_status",
+  "column_break_g4vjm",
+  "amended_from",
+  "section_item",
   "construction",
   "gsm",
-  "custom_status",
-  "column_break_gfc3m",
+  "cut_size",
+  "column_break_item1",
   "fabric_qty",
+  "column_break_item2",
   "finish_weight",
   "gross_weight",
-  "column_break_g4vjm",
-  "fabric_type",
-  "time",
-  "delivery_date",
-  "type",
-  "weave",
-  "naming_series",
-  "description",
-  "greige_request_no",
-  "erp_doc",
-  "mat_id",
+  "section_finish_items",
+  "finish_items",
+  "rate_section",
+  "weaving_rate_per_pick",
+  "weaving_rate_per_meter",
+  "total_charges_per_meter",
   "section_break_pgtlb",
   "bom_items",
   "section_break_n01kw",
@@ -36,77 +42,39 @@
   "total_yarn",
   "column_break_n64sz",
   "total_bags",
-  "costing_section",
-  "weaving_rate_per_pick",
-  "column_break_c4hyy",
-  "weaving_rate_per_meter",
-  "column_break_mptqi",
-  "total_charges_per_meter",
+  "section_construction",
+  "weaving_construction",
   "loom_details_section",
   "loom_type",
   "column_break_fhbmy",
   "loom_size",
   "column_break_slcuw",
   "payment_terms",
-  "amended_from",
   "sales_order",
-  "sales_order_item"
+  "sales_order_item",
+  "time",
+  "delivery_date",
+  "fabric_type",
+  "weave",
+  "description",
+  "greige_request_no",
+  "erp_doc",
+  "mat_id"
  ],
  "fields": [
   {
-   "fieldname": "weaver",
-   "fieldtype": "Link",
-   "label": "Weaver",
-   "options": "Supplier",
-   "reqd": 1,
-   "description": "2026-09-28 (feature v3) - changed from Customer to Supplier (a weaver is who you're paying to weave, not who you're selling to). Existing contracts keep whatever value they had - if that value isn't also a Supplier record, the field will show blank/invalid until re-picked."
-  },
-  {
-   "fieldname": "fabric_qty",
-   "fieldtype": "Float",
-   "label": "Order Qty",
-   "description": "When linked to a Sales Order this is calculated on save from the yarn lbs: total Yarn Qty / Towel Costing Sheet lbs per piece."
-  },
-  {
-   "default": "0",
-   "fieldname": "finish_weight",
-   "fieldtype": "Float",
-   "label": "Finish Weight",
-   "read_only": 1,
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "in_list_view": 1,
+   "label": "Series",
+   "options": "WC-.#####",
    "reqd": 1
   },
   {
-   "default": "0",
-   "fieldname": "gross_weight",
-   "fieldtype": "Float",
-   "label": "Gross Weight",
-   "read_only": 1,
-   "reqd": 1
-  },
-  {
-   "fieldname": "delivery_date",
-   "fieldtype": "Date",
-   "label": "Delivery Date",
-   "hidden": 1
-  },
-  {
-   "fieldname": "fabric_type",
-   "fieldtype": "Link",
-   "label": "Fabric Type",
-   "options": "Fabric Type",
-   "hidden": 1
-  },
-  {
-   "fieldname": "description",
-   "fieldtype": "Data",
-   "hidden": 1,
-   "label": "Description"
-  },
-  {
-   "fieldname": "greige_request_no",
-   "fieldtype": "Int",
-   "hidden": 1,
-   "label": "Greige Request No"
+   "fieldname": "section_details",
+   "fieldtype": "Section Break",
+   "label": "Contract Details"
   },
   {
    "fieldname": "date",
@@ -115,47 +83,166 @@
    "reqd": 1
   },
   {
-   "fieldname": "type",
+   "fieldname": "weaver",
    "fieldtype": "Link",
-   "label": "Type",
-   "options": "Weaving Type"
+   "label": "Weaver",
+   "options": "Supplier",
+   "reqd": 1
   },
   {
-   "fieldname": "weave",
+   "fieldname": "customer",
    "fieldtype": "Link",
-   "label": "Weave",
-   "options": "Weave",
-   "hidden": 1
-  },
-  {
-   "fieldname": "erp_doc",
-   "fieldtype": "Data",
-   "hidden": 1,
-   "label": "ERP Doc#"
-  },
-  {
-   "fieldname": "mat_id",
-   "fieldtype": "Data",
-   "hidden": 1,
-   "label": "Mat ID"
+   "label": "Customer",
+   "options": "Customer",
+   "mandatory_depends_on": "eval:doc.type=='Commercial' && (doc.weaver||'').trim().toLowerCase()=='paul textiles'"
   },
   {
    "fieldname": "column_break_gfc3m",
    "fieldtype": "Column Break"
   },
   {
+   "fieldname": "type",
+   "fieldtype": "Link",
+   "label": "Weaving Type",
+   "options": "Weaving Type"
+  },
+  {
+   "fieldname": "multi_item_weaving_contract",
+   "fieldtype": "Check",
+   "label": "Multi Item Weaving Contract",
+   "default": "0",
+   "depends_on": "eval:doc.type=='Commercial'"
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Open",
+   "fieldname": "custom_status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nClose",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
    "fieldname": "column_break_g4vjm",
    "fieldtype": "Column Break"
   },
   {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Weaving Contract",
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_item",
+   "fieldtype": "Section Break",
+   "label": "Finish Item",
+   "depends_on": "eval:!(doc.type=='Commercial' && doc.multi_item_weaving_contract)"
+  },
+  {
+   "fieldname": "construction",
+   "fieldtype": "Link",
+   "label": "Finish Item",
+   "options": "Item",
+   "mandatory_depends_on": "eval:!(doc.type=='Commercial' && doc.multi_item_weaving_contract)"
+  },
+  {
+   "fieldname": "gsm",
+   "fieldtype": "Float",
+   "label": "GSM",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "cut_size",
+   "fieldtype": "Data",
+   "label": "Cut Size"
+  },
+  {
+   "fieldname": "column_break_item1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "fabric_qty",
+   "fieldtype": "Float",
+   "label": "Order Qty"
+  },
+  {
+   "fieldname": "column_break_item2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "finish_weight",
+   "fieldtype": "Float",
+   "label": "Finish Weight",
+   "read_only_depends_on": "eval:doc.type!='Commercial'"
+  },
+  {
+   "default": "0",
+   "fieldname": "gross_weight",
+   "fieldtype": "Float",
+   "label": "Gross Weight",
+   "read_only_depends_on": "eval:doc.type!='Commercial'"
+  },
+  {
+   "fieldname": "section_finish_items",
+   "fieldtype": "Section Break",
+   "label": "Finish Items",
+   "depends_on": "eval:doc.type=='Commercial' && doc.multi_item_weaving_contract"
+  },
+  {
+   "fieldname": "finish_items",
+   "fieldtype": "Table",
+   "label": "Finish Items",
+   "options": "Weaving Contract Finish Item",
+   "mandatory_depends_on": "eval:doc.type=='Commercial' && doc.multi_item_weaving_contract"
+  },
+  {
+   "fieldname": "rate_section",
+   "fieldtype": "Section Break",
+   "label": "Weaving Rate"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "weaving_rate_per_pick",
+   "fieldtype": "Data",
+   "label": "Weaving Rate Per Pick",
+   "hidden": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "weaving_rate_per_meter",
+   "fieldtype": "Data",
+   "label": "Weaving rate per Meter",
+   "hidden": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "total_charges_per_meter",
+   "fieldtype": "Data",
+   "label": "Total Charges Per Meter",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
    "fieldname": "section_break_pgtlb",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Yarn"
   },
   {
    "fieldname": "bom_items",
    "fieldtype": "Table",
    "label": "BOM Items",
    "options": "BOM Items"
+  },
+  {
+   "fieldname": "section_break_n01kw",
+   "fieldtype": "Section Break",
+   "label": "Totals"
   },
   {
    "default": "0",
@@ -166,12 +253,20 @@
    "read_only": 1
   },
   {
+   "fieldname": "column_break_ciiwd",
+   "fieldtype": "Column Break"
+  },
+  {
    "default": "0",
    "fieldname": "total_yarn",
    "fieldtype": "Float",
    "label": "Total Yarn",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "column_break_n64sz",
+   "fieldtype": "Column Break"
   },
   {
    "default": "0",
@@ -182,51 +277,15 @@
    "reqd": 1
   },
   {
-   "fieldname": "section_break_n01kw",
-   "fieldtype": "Section Break"
-  },
-  {
-   "fieldname": "column_break_ciiwd",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "column_break_n64sz",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "costing_section",
+   "fieldname": "section_construction",
    "fieldtype": "Section Break",
-   "label": "Costing"
+   "label": "Weaving Construction"
   },
   {
-   "allow_on_submit": 1,
-   "fieldname": "weaving_rate_per_pick",
-   "fieldtype": "Data",
-   "label": "Weaving Rate Per Pick",
-   "hidden": 1
-  },
-  {
-   "fieldname": "column_break_c4hyy",
-   "fieldtype": "Column Break"
-  },
-  {
-   "allow_on_submit": 1,
-   "fieldname": "weaving_rate_per_meter",
-   "fieldtype": "Data",
-   "label": "Weaving rate per Meter",
-   "hidden": 1
-  },
-  {
-   "fieldname": "column_break_mptqi",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "0",
-   "fieldname": "total_charges_per_meter",
-   "fieldtype": "Data",
-   "label": "Total Charges Per Meter",
-   "read_only": 1,
-   "hidden": 1
+   "fieldname": "weaving_construction",
+   "fieldtype": "Table",
+   "label": "Weaving Construction",
+   "options": "Weaving Construction"
   },
   {
    "fieldname": "loom_details_section",
@@ -242,10 +301,18 @@
    "hidden": 1
   },
   {
+   "fieldname": "column_break_fhbmy",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "loom_size",
    "fieldtype": "Float",
    "label": "Loom Size",
    "hidden": 1
+  },
+  {
+   "fieldname": "column_break_slcuw",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "payment_terms",
@@ -253,30 +320,6 @@
    "label": "Payment Terms",
    "options": "Payment Term",
    "hidden": 1
-  },
-  {
-   "fieldname": "column_break_fhbmy",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "column_break_slcuw",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "construction",
-   "fieldtype": "Link",
-   "label": "Finish Item",
-   "options": "Item",
-   "reqd": 1
-  },
-  {
-   "fieldname": "amended_from",
-   "fieldtype": "Link",
-   "label": "Amended From",
-   "no_copy": 1,
-   "options": "Weaving Contract",
-   "print_hide": 1,
-   "read_only": 1
   },
   {
    "fieldname": "sales_order",
@@ -296,15 +339,6 @@
    "read_only": 1
   },
   {
-   "fieldname": "naming_series",
-   "fieldtype": "Select",
-   "hidden": 1,
-   "in_list_view": 1,
-   "label": "Series",
-   "options": "WC-.#####",
-   "reqd": 1
-  },
-  {
    "default": "Now",
    "fieldname": "time",
    "fieldtype": "Time",
@@ -313,22 +347,48 @@
    "hidden": 1
   },
   {
-   "allow_on_submit": 1,
-   "default": "Open",
-   "fieldname": "custom_status",
-   "fieldtype": "Select",
-   "label": "Custom Status",
-   "options": "Open\nClose",
-   "read_only": 1,
-   "reqd": 1
+   "fieldname": "delivery_date",
+   "fieldtype": "Date",
+   "label": "Delivery Date",
+   "hidden": 1
   },
   {
-   "fieldname": "gsm",
-   "fieldtype": "Float",
-   "label": "GSM",
-   "read_only": 1,
-   "no_copy": 1,
-   "description": "2026-09-28 (feature v3) - fetched from the Towel Costing Sheet's Finish Item table (the row whose Article matches Finish Item). Recalculated on save and live when Finish Item or Sales Order changes."
+   "fieldname": "fabric_type",
+   "fieldtype": "Link",
+   "label": "Fabric Type",
+   "options": "Fabric Type",
+   "hidden": 1
+  },
+  {
+   "fieldname": "weave",
+   "fieldtype": "Link",
+   "label": "Weave",
+   "options": "Weave",
+   "hidden": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Description"
+  },
+  {
+   "fieldname": "greige_request_no",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Greige Request No"
+  },
+  {
+   "fieldname": "erp_doc",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "ERP Doc#"
+  },
+  {
+   "fieldname": "mat_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Mat ID"
   }
  ],
  "index_web_pages_for_search": 1,
@@ -351,7 +411,7 @@
    "link_fieldname": "weaving_contract"
   }
  ],
- "modified": "2026-09-28 14:00:00.000000",
+ "modified": "2026-10-26 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Emadiv3",
  "name": "Weaving Contract",

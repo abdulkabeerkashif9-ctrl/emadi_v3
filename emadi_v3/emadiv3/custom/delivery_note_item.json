@@ -182,6 +182,64 @@
    "translatable": 0,
    "unique": 0,
    "width": null
+  },
+  {
+   "fieldname": "custom_roll",
+   "fieldtype": "Float",
+   "label": "Roll",
+   "insert_after": "custom_weaving_contract",
+   "in_list_view": 1,
+   "dt": "Delivery Note Item",
+   "name": "Delivery Note Item-custom_roll",
+   "doctype": "Custom Field"
+  },
+  {
+   "fieldname": "custom_weight_kg",
+   "fieldtype": "Float",
+   "label": "Weight Kg",
+   "insert_after": "custom_roll",
+   "in_list_view": 1,
+   "precision": "4",
+   "dt": "Delivery Note Item",
+   "name": "Delivery Note Item-custom_weight_kg",
+   "doctype": "Custom Field"
+  },
+  {
+   "fieldname": "custom_weight_lbs",
+   "fieldtype": "Float",
+   "label": "Weight LBS",
+   "insert_after": "custom_weight_kg",
+   "in_list_view": 1,
+   "read_only": 1,
+   "precision": "4",
+   "description": "Weight Kg * 2.2046",
+   "dt": "Delivery Note Item",
+   "name": "Delivery Note Item-custom_weight_lbs",
+   "doctype": "Custom Field"
+  },
+  {
+   "fieldname": "custom_pieces",
+   "fieldtype": "Float",
+   "label": "Pieces",
+   "insert_after": "custom_weight_lbs",
+   "in_list_view": 1,
+   "read_only": 1,
+   "description": "Qty in stock UOM (Qty as per Stock UOM)",
+   "dt": "Delivery Note Item",
+   "name": "Delivery Note Item-custom_pieces",
+   "doctype": "Custom Field"
+  },
+  {
+   "fieldname": "custom_weaving_contract_reference",
+   "fieldtype": "Link",
+   "label": "Weaving Contract Reference",
+   "options": "Weaving Contract",
+   "insert_after": "custom_pieces",
+   "read_only": 1,
+   "no_copy": 1,
+   "dt": "Delivery Note Item",
+   "name": "Delivery Note Item-custom_weaving_contract_reference",
+   "doctype": "Custom Field"
   }
  ],
  "custom_perms": [],

@@ -3,6 +3,7 @@
 
 frappe.ui.form.on('Weaving Contract', {
 	refresh: function(frm) {
+		toggle_multi_item(frm);
 
 		// 2026-09-28 (feature v3) - fill GSM on load too (not just on
 		// Finish Item / Sales Order change), so it shows immediately on an
@@ -92,7 +93,7 @@ frappe.ui.form.on('Weaving Contract', {
 		// and Issue Yarn moved in here alongside Weaving Receipt (both are
 		// the External-only steps: send yarn out, receive fabric back).
 		if (frm.doc.docstatus == 1 && frm.doc.custom_status == "Open") {
-			if (frm.doc.type == "Internal") {
+			if (["Internal", "Commercial"].includes(frm.doc.type)) {
 				frm.add_custom_button(__('Sizing Program'), function() {
 					open_sizing_program_dialog(frm)
 				}).css('background-color', '#2490EF').css('color', '#ffffff','font-weight','bold');
@@ -121,9 +122,27 @@ frappe.ui.form.on('Weaving Contract', {
 			}
 		}
 
+		// 2026-09-30 - Customer Provided yarn request, for Commercial contracts only
+		// (no longer depends on the weaver).
+		if (frm.doc.docstatus == 1 && frm.doc.type == "Commercial") {
+			frm.add_custom_button(__('Create Material Request for Yarn'), function() {
+				frappe.call({
+					method: "emadi_v3.emadiv3.events.customer_yarn_material_request.make_customer_yarn_material_request",
+					args: { weaving_contract: frm.doc.name },
+					freeze: true,
+					callback: function(r) {
+						if (!r.exc && r.message) {
+							frappe.model.sync(r.message);
+							frappe.set_route("Form", r.message.doctype, r.message.name);
+						}
+					}
+				});
+			}).css('background-color', '#2490EF').css('color', '#ffffff');
+		}
+
 		// Fabric Qty is derived from the yarn lbs when linked to a Sales Order
 		// (only when the rows came from the Towel Costing Sheet yarn balance)
-		let yarn_driven = frm.doc.sales_order && (frm.doc.bom_items || []).some((r) => flt(r.so_yarn_balance) > 0);
+		let yarn_driven = frm.doc.type != "Commercial" && frm.doc.sales_order && (frm.doc.bom_items || []).some((r) => flt(r.so_yarn_balance) > 0);
 		frm.set_df_property('fabric_qty', 'read_only', yarn_driven ? 1 : 0);
 
 		frm.set_query('construction', function() {
@@ -132,6 +151,12 @@ frappe.ui.form.on('Weaving Contract', {
 					"item_group": "Fabric"
 				}
 			}
+		});
+		frm.set_query('finish_item', 'bom_items', function() {
+			return { filters: { name: ["in", get_finish_item_names(frm)] } };
+		});
+		frm.set_query('finish_item', 'finish_items', function() {
+			return { filters: { item_group: "Fabric" } };
 		});
 		frm.set_query('yarn_count','bom_items', function() {
 			return {
@@ -164,6 +189,40 @@ frappe.ui.form.on('Weaving Contract', {
 		});
 	},
 
+	type: function(frm) {
+		// Multi Item only exists for Commercial contracts
+		if (frm.doc.type != "Commercial" && frm.doc.multi_item_weaving_contract) {
+			frm.set_value("multi_item_weaving_contract", 0);
+		}
+		toggle_multi_item(frm);
+	},
+	multi_item_weaving_contract: function(frm) {
+		toggle_multi_item(frm);
+	},
+	// Each Finish Item's yarn Ratio % must add up to 100
+	validate: function(frm) {
+		if (!is_multi_item(frm)) {
+			return;
+		}
+		let totals = {};
+		(frm.doc.finish_items || []).forEach(function(r) {
+			if (r.finish_item) {
+				totals[r.finish_item] = 0;
+			}
+		});
+		(frm.doc.bom_items || []).forEach(function(r) {
+			if (!r.finish_item || !(r.finish_item in totals)) {
+				frappe.throw(__("BOM Items row {0}: select a Finish Item from the Finish Items table.", [r.idx]));
+			}
+			totals[r.finish_item] += flt(r.ratio);
+		});
+		Object.keys(totals).forEach(function(item) {
+			if (Math.abs(totals[item] - 100) > 0.01) {
+				frappe.throw(__("Ratio % of the yarn rows for {0} adds up to {1}, it must be 100.", [item, flt(totals[item], 2)]));
+			}
+		});
+	},
+
 	// 2026-09-28 (feature v3) - "gsm field ... in Weaving contract" (your
 	// words). Live preview only - the server's validate() recalculates
 	// this fresh on every save regardless (see sync_gsm in
@@ -176,12 +235,49 @@ frappe.ui.form.on('Weaving Contract', {
 	}
 });
 
+function is_multi_item(frm) {
+	return frm.doc.type == "Commercial" && frm.doc.multi_item_weaving_contract;
+}
+
+function get_finish_item_names(frm) {
+	let names = (frm.doc.finish_items || []).map((r) => r.finish_item).filter(Boolean);
+	return names.length ? names : [""];
+}
+
+// Multi Item: BOM Items rows get a Finish Item column.
+function toggle_multi_item(frm) {
+	const grid = frm.fields_dict.bom_items && frm.fields_dict.bom_items.grid;
+	if (!grid) {
+		return;
+	}
+	const multi = is_multi_item(frm) ? 1 : 0;
+	grid.update_docfield_property('finish_item', 'hidden', multi ? 0 : 1);
+	grid.update_docfield_property('finish_item', 'reqd', multi);
+	frm.refresh_field('bom_items');
+}
+
+frappe.ui.form.on('Weaving Contract Finish Item', {
+	finish_item: function(frm, cdt, cdn) {
+		let row = locals[cdt][cdn];
+		if (!row.finish_item) {
+			return;
+		}
+		frappe.call({
+			method: "emadi_v3.emadiv3.doctype.weaving_contract.weaving_contract.get_contract_gsm",
+			args: { construction: row.finish_item },
+			callback: (r) => {
+				frappe.model.set_value(cdt, cdn, "gsm", r.message || 0);
+			}
+		});
+	}
+});
+
 function fetch_gsm(frm) {
 	if (!frm.doc.construction) {
 		return;
 	}
 	frappe.call({
-		method: "emadi_v3.emadi.doctype.weaving_contract.weaving_contract.get_contract_gsm",
+		method: "emadi_v3.emadiv3.doctype.weaving_contract.weaving_contract.get_contract_gsm",
 		args: {
 			sales_order: frm.doc.sales_order,
 			sales_order_item: frm.doc.sales_order_item,
@@ -194,6 +290,13 @@ function fetch_gsm(frm) {
 }
 
 frappe.ui.form.on('BOM Items', {
+	bom_items_add: function(frm, cdt, cdn) {
+		// only one Finish Item: no need to pick it on every row
+		let items = get_finish_item_names(frm).filter(Boolean);
+		if (is_multi_item(frm) && items.length == 1) {
+			frappe.model.set_value(cdt, cdn, "finish_item", items[0]);
+		}
+	},
 	// 2026-09-26 - contracts are split by yarn lbs: Yarn Qty is editable,
 	// Required Bags follows it (Yarn Qty / Lbs per Bag). Fabric Qty is
 	// recalculated from the lbs on save (server-side).
@@ -364,51 +467,57 @@ function sync_yarn_issued_totals(frm) {
 // method silently defaulting to the first one.
 // ---------------------------------------------------------------------
 function open_sizing_program_dialog(frm) {
-	let rows = (frm.doc.bom_items || []).filter(function(r) {
-		return (r.for == "Pile" || r.for == "Ground") && r.yarn_count
-	})
+	// The server adds up rows of the same yarn and drops any yarn whose full
+	// LBS already has a Sizing Program.
+	frappe.call({
+		method: "emadi_v3.emadi.events.create_sizing_program_from_weaving_contract.get_sizing_program_items",
+		args: { weaving_contract: frm.doc.name },
+		callback: function(r) {
+			let rows = r.message || []
 
-	if (!rows.length) {
-		frappe.msgprint(__("No Pile/Ground item with a Yarn Count found in this Weaving Contract's BOM Items."))
-		return
-	}
+			if (!rows.length) {
+				frappe.msgprint(__("No Pile/Ground yarn is left to create a Sizing Program for."))
+				return
+			}
 
-	let by_label = {}
-	let options = rows.map(function(r) {
-		let label = `${r.for} - ${r.yarn_count}`
-		by_label[label] = r
-		return label
-	})
-
-	frappe.prompt(
-		[{
-			fieldname: 'row',
-			label: __('Pile/Ground Item'),
-			fieldtype: 'Select',
-			options: options,
-			reqd: 1
-		}],
-		function(values) {
-			let selected = by_label[values.row]
-			frappe.call({
-				method: "emadi_v3.emadi.events.create_sizing_program_from_weaving_contract.create_sizing_program_from_weaving_contract",
-				args: {
-					weaving_contract: frm.doc.name,
-					item: selected.yarn_count,
-					beam_for: selected.for
-				},
-				freeze: true,
-				callback: function(r) {
-					if (!r.exc && r.message) {
-						frappe.model.sync(r.message);
-						frappe.set_route("Form", r.message.doctype, r.message.name);
-					}
-				}
+			let by_label = {}
+			let options = rows.map(function(row) {
+				let label = `${row.for} - ${row.yarn_count} (${format_number(row.pending)} lbs)`
+				by_label[label] = row
+				return label
 			})
-		},
-		__('Select Pile/Ground Item'),
-		__('Create')
-	)
+
+			frappe.prompt(
+				[{
+					fieldname: 'row',
+					label: __('Pile/Ground Item'),
+					fieldtype: 'Select',
+					options: options,
+					reqd: 1
+				}],
+				function(values) {
+					let selected = by_label[values.row]
+					frappe.call({
+						method: "emadi_v3.emadi.events.create_sizing_program_from_weaving_contract.create_sizing_program_from_weaving_contract",
+						args: {
+							weaving_contract: frm.doc.name,
+							item: selected.yarn_count,
+							beam_for: selected.for
+						},
+						freeze: true,
+						callback: function(r) {
+							if (!r.exc && r.message) {
+								frappe.model.sync(r.message);
+								frappe.set_route("Form", r.message.doctype, r.message.name);
+							}
+						}
+					})
+				},
+				__('Select Pile/Ground Item'),
+				__('Create')
+			)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------
@@ -436,6 +545,11 @@ function get_items_from_sales_order(frm) {
 						frappe.msgprint(__('No items with a pending weaving balance were found in {0}', [values.sales_order]))
 						return
 					}
+					if (items.length > 1) {
+						// several unique items: straight into a Commercial Multi Item contract
+						fetch_multi_item(frm, values.sales_order)
+						return
+					}
 					pick_sales_order_item(frm, values.sales_order, items)
 				}
 			})
@@ -443,6 +557,36 @@ function get_items_from_sales_order(frm) {
 		__('Get Items From Sales Order'),
 		__('Next')
 	)
+}
+
+function fetch_multi_item(frm, sales_order) {
+	frappe.call({
+		method: "emadi_v3.emadi.events.get_items_from_sales_order.get_multi_item_weaving_data",
+		args: { sales_order: sales_order },
+		freeze: true,
+		callback: function(r) {
+			let data = r.message
+			if (!data) return
+
+			frm.set_value('sales_order', sales_order)
+			frm.set_value('sales_order_item', data.sales_order_item)
+			frm.set_value('type', 'Commercial')
+			frm.set_value('multi_item_weaving_contract', 1)
+
+			frm.clear_table('finish_items')
+			;(data.finish_items || []).forEach(function(row) {
+				let child = frm.add_child('finish_items')
+				Object.assign(child, row)
+			})
+			frm.clear_table('bom_items')
+			;(data.bom_items || []).forEach(function(row) {
+				let child = frm.add_child('bom_items')
+				Object.assign(child, row)
+			})
+			frm.refresh_fields()
+			calculate_total(frm)
+		}
+	})
 }
 
 function pick_sales_order_item(frm, sales_order, items) {

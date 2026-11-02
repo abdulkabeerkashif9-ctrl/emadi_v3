@@ -426,6 +426,17 @@
    "translatable": 0,
    "unique": 0,
    "width": null
+  },
+  {
+   "fieldname": "custom_total_bags",
+   "fieldtype": "Float",
+   "label": "Total Bags",
+   "insert_after": "items",
+   "read_only": 1,
+   "description": "Total Quantity / 100",
+   "dt": "Material Request",
+   "name": "Material Request-custom_total_bags",
+   "doctype": "Custom Field"
   }
  ],
  "custom_perms": [],

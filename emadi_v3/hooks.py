@@ -31,7 +31,8 @@ app_license = "mit"
 
 # include js in doctype views
 doctype_js = {"Delivery Note" : "public/js/dn.js","Stock Entry" : "public/js/stock_entry.js",
-"Sales Invoice" : "public/js/sales_invoice.js"}
+"Sales Invoice" : "public/js/sales_invoice.js",
+"Material Request" : "public/js/material_request.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -122,7 +123,14 @@ doctype_js = {"Delivery Note" : "public/js/dn.js","Stock Entry" : "public/js/sto
 
 doc_events = {
     "Delivery Note": {
+        "validate": "emadi_v3.emadiv3.events.dn_weaving_contract.validate",
         "on_submit": "emadi_v3.emadiv3.events.create_dn.onsubmit"
+    },
+    "Stock Entry": {
+        "before_validate": "emadi_v3.emadiv3.events.stock_entry_weaving_contract.before_validate"
+    },
+    "Material Request": {
+        "validate": "emadi_v3.emadiv3.events.customer_yarn_material_request.validate"
     },
     # "Fabric Construction": {
     #     "on_update": "emadi_v3.emadiv3.events.sync_item_enabled.sync_item_enabled"

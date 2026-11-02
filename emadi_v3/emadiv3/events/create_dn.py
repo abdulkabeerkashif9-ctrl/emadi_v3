@@ -2,7 +2,7 @@ import frappe
 from frappe.model.document import Document
 
 def onsubmit(doc, method):
-    if not doc.custom_non_conversion:
+    if not doc.custom_non_conversion and doc.fabric_item:
         
         if doc.is_return == 1:
             stock_entry = frappe.new_doc("Stock Entry")

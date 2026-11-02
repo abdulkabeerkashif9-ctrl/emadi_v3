@@ -6,7 +6,7 @@ import json
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt
+from frappe.utils import cint, flt
 
 from emadi_v3.emadi.events.weaving_yarn_balance import (
 	get_contract_tcs,
@@ -17,14 +17,22 @@ from emadi_v3.emadi.events.weaving_yarn_balance import (
 
 class WeavingContract(Document):
 	def validate(self):
-		sync_gsm(self)
+		if is_multi_item(self):
+			sync_multi_item_fields(self)
+		else:
+			sync_gsm(self)
 		# Submitted contracts are re-saved by Open / Close (custom_status) -
 		# leave their quantities alone then.
 		if self.docstatus == 1 and getattr(self, "_action", None) != "submit":
 			return
 		sync_yarn_driven_fields(self)
-		# Draft save: warn only. Submit: hard stop (fresh DB re-read).
-		validate_contract_yarn_balance(self, hard=self.docstatus == 1)
+		if is_multi_item(self):
+			validate_multi_item_ratios(self)
+		# Commercial contracts don't use the Towel Costing Sheet, so there is
+		# no TCS yarn balance to check.
+		if self.type != "Commercial":
+			# Draft save: warn only. Submit: hard stop (fresh DB re-read).
+			validate_contract_yarn_balance(self, hard=self.docstatus == 1)
 
 	def on_submit(self):
 		allocate_sales_order_balance(self)
@@ -61,6 +69,56 @@ class WeavingContract(Document):
 				row.yarn_qty = lines[k]["per_pc"] * flt(self.fabric_qty)
 
 		sync_yarn_driven_fields(self)
+
+
+def is_multi_item(doc):
+	return doc.get("type") == "Commercial" and cint(doc.get("multi_item_weaving_contract"))
+
+
+def sync_multi_item_fields(doc):
+	"""Multi Item Weaving Contract: Finish Item, GSM, Finish Weight and Gross
+	Weight come from the first row of the Finish Items table, Order Qty is the
+	total of all rows."""
+	rows = doc.get("finish_items") or []
+	if not rows:
+		frappe.throw(_("Add at least one row in the Finish Items table."))
+
+	seen = set()
+	for row in rows:
+		if row.finish_item in seen:
+			frappe.throw(_("Row {0}: Finish Item {1} is entered more than once.").format(row.idx, row.finish_item))
+		seen.add(row.finish_item)
+
+	first = rows[0]
+	doc.construction = first.finish_item
+	doc.gsm = flt(first.gsm)
+	doc.finish_weight = flt(first.finish_weight)
+	doc.gross_weight = flt(first.gross_weight)
+	doc.fabric_qty = sum(flt(r.order_qty) for r in rows)
+
+
+def validate_multi_item_ratios(doc):
+	"""Every BOM Items row needs a Finish Item from the Finish Items table, and
+	the Ratio % of each Finish Item's rows must add up to 100."""
+	finish_items = [r.finish_item for r in doc.get("finish_items") or []]
+	totals = {item: 0.0 for item in finish_items}
+
+	for row in doc.get("bom_items") or []:
+		if not row.get("finish_item"):
+			frappe.throw(_("BOM Items row {0}: Finish Item is required.").format(row.idx))
+		if row.finish_item not in totals:
+			frappe.throw(
+				_("BOM Items row {0}: Finish Item {1} is not in the Finish Items table.").format(row.idx, row.finish_item)
+			)
+		totals[row.finish_item] += flt(row.ratio)
+
+	for item, total in totals.items():
+		if abs(total - 100) > 0.01:
+			frappe.throw(
+				_("Ratio % of the yarn rows for Finish Item {0} adds up to {1}, it must be 100.").format(
+					item, frappe.format(total, {"fieldtype": "Float", "precision": 2})
+				)
+			)
 
 
 def get_gsm_from_tcs(towel_costing_sheet, item_code):
@@ -137,9 +195,33 @@ def sync_yarn_driven_fields(doc):
 	on submit; because every yarn is capped at its own lbs balance, the
 	pieces derived this way can never add up to more than the Sales Order
 	qty across contracts."""
+	commercial = doc.get("type") == "Commercial"
+	# Multi item: each yarn row is worked out from its own Finish Item's
+	# Order Qty and Gross Weight.
+	finish_items = (
+		{r.finish_item: r for r in doc.get("finish_items") or []} if is_multi_item(doc) else {}
+	)
 	total_yarn = 0.0
 	total_bags = 0.0
 	for row in doc.get("bom_items") or []:
+		if commercial:
+			# Commercial: no TCS - Yarn Qty comes from the parent's Gross Weight
+			# (grams per piece), in LBS:
+			# ((Gross Weight * Order Qty) / 1000) * 2.2046 * Ratio %, plus Weaving Wastage %
+			if finish_items:
+				source = finish_items.get(row.get("finish_item"))
+				gross_weight = flt(source.gross_weight) if source else 0
+				order_qty = flt(source.order_qty) if source else 0
+			else:
+				gross_weight = flt(doc.get("gross_weight"))
+				order_qty = flt(doc.get("fabric_qty"))
+			row.yarn_qty = (
+				(gross_weight * order_qty / 1000)
+				* 2.2046
+				* flt(row.ratio)
+				/ 100
+				* (1 + flt(row.get("weaving_wastage")) / 100)
+			)
 		if flt(row.lbs_per_bag):
 			row.required_bags = flt(row.yarn_qty) / flt(row.lbs_per_bag)
 		total_yarn += flt(row.yarn_qty)
@@ -149,7 +231,7 @@ def sync_yarn_driven_fields(doc):
 	doc.total_consumption = total_yarn
 	doc.total_bags = total_bags
 
-	if doc.get("sales_order") and doc.get("construction"):
+	if not commercial and doc.get("sales_order") and doc.get("construction"):
 		tcs = get_contract_tcs(doc)
 		lines = get_tcs_lines(tcs, doc.construction)
 		per_piece_total = sum(line["per_pc"] for line in lines.values())
@@ -183,39 +265,47 @@ def allocate_sales_order_balance(doc):
 	if not (doc.sales_order and doc.construction):
 		return
 
-	rows = frappe.get_all(
-		"Sales Order Item",
-		filters={"parent": doc.sales_order, "item_code": doc.construction},
-		fields=["name", "qty", "custom_weave_qty"],
-		order_by="idx asc",
-	)
+	# Multi item contracts draw each Finish Item's Order Qty from its own
+	# Sales Order rows; every other contract has the one item.
+	if is_multi_item(doc):
+		draws = [(r.finish_item, flt(r.order_qty)) for r in doc.get("finish_items") or []]
+	else:
+		draws = [(doc.construction, flt(doc.fabric_qty))]
 
-	remaining = flt(doc.fabric_qty)
 	allocations = []
-
-	for row in rows:
-		if remaining <= 0:
-			break
-		available = flt(row.qty) - flt(row.custom_weave_qty)
-		if available <= 0:
-			continue
-		take = min(available, remaining)
-		frappe.db.set_value(
-			"Sales Order Item", row.name, "custom_weave_qty", flt(row.custom_weave_qty) + take
+	for item_code, qty in draws:
+		rows = frappe.get_all(
+			"Sales Order Item",
+			filters={"parent": doc.sales_order, "item_code": item_code},
+			fields=["name", "qty", "custom_weave_qty"],
+			order_by="idx asc",
 		)
-		allocations.append({"sales_order_item": row.name, "qty": take})
-		remaining -= take
 
-	# Fabric Qty is derived from yarn lbs (sync_yarn_driven_fields), so a
-	# few thousandths of a piece of float rounding must not block submit.
-	if remaining > 0.01:
-		frappe.throw(
-			_(
-				"Only {0} of {1} is actually available against Sales Order {2} for Item {3} right now "
-				"(someone else may have used part of the balance since you fetched it) - reduce Order "
-				"Qty or use Get Items From Sales Order again."
-			).format(flt(doc.fabric_qty) - remaining, doc.fabric_qty, doc.sales_order, doc.construction)
-		)
+		remaining = qty
+
+		for row in rows:
+			if remaining <= 0:
+				break
+			available = flt(row.qty) - flt(row.custom_weave_qty)
+			if available <= 0:
+				continue
+			take = min(available, remaining)
+			frappe.db.set_value(
+				"Sales Order Item", row.name, "custom_weave_qty", flt(row.custom_weave_qty) + take
+			)
+			allocations.append({"sales_order_item": row.name, "qty": take})
+			remaining -= take
+
+		# Fabric Qty is derived from yarn lbs (sync_yarn_driven_fields), so a
+		# few thousandths of a piece of float rounding must not block submit.
+		if remaining > 0.01:
+			frappe.throw(
+				_(
+					"Only {0} of {1} is actually available against Sales Order {2} for Item {3} right now "
+					"(someone else may have used part of the balance since you fetched it) - reduce Order "
+					"Qty or use Get Items From Sales Order again."
+				).format(qty - remaining, qty, doc.sales_order, item_code)
+			)
 
 	frappe.db.set_value(
 		"Weaving Contract", doc.name, "sales_order_item_allocations", json.dumps(allocations)
@@ -280,6 +370,8 @@ def create_beam_items(doc):
 		item.item_group = "Beam"
 		item.stock_uom = "Nos"
 		item.is_stock_item = 1
+		# Sizing Receipt makes one Batch per beam, so Beam items are batch tracked
+		item.has_batch_no = 1
 		item.insert(ignore_permissions=True)
 		created.append(item_code)
 
