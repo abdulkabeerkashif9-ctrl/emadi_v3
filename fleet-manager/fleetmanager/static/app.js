@@ -634,10 +634,12 @@ function siteApps({ s, srv, apps }) {
       $("#appinfo", root).textContent = n ? `${n} app${n > 1 ? "s have" : " has"} updates available.` : "Everything is up to date.";
       const upd = $("#appupd", root), cks = () => $$(".appck", root).filter(c => c.checked).map(c => c.value);
       const sync = () => { upd.disabled = !cks().length; }; $$(".appck", root).forEach(c => c.onchange = sync); sync();
-      upd.onclick = async () => {
+      upd.onclick = () => {
         const sel = cks();
-        if (!await confirmBox("Update apps", `Update <b>${esc(sel.join(", "))}</b>? A backup of ${esc(s.domain)} is taken first. The code is shared, so <b>every site on ${esc(s.server_name)}</b> gets the new version and may briefly restart.`, "Update")) return;
-        busy(upd, async () => { const r = await api("POST", `/api/sites/${s.id}/update-apps`, { apps: sel }); startJob(r.job_id, `Update apps on ${s.domain}`); });
+        const d = dialog("Update apps", `<p class="muted" style="margin:0 0 8px">Update <b>${esc(sel.join(", "))}</b>? A backup of ${esc(s.domain)} is taken first. The code is shared, so <b>every site on ${esc(s.server_name)}</b> gets the new version and may briefly restart.</p>
+          <label class="check"><input type="checkbox" id="fo"><div><b>Overwrite changes made on the server</b><div class="hint">Only needed if someone edited the app's files directly on the VPS; they are replaced by the repository version.</div></div></label>`,
+          `<button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Update</button>`, { noFocus: true });
+        $("#go", d).onclick = e => busy(e.currentTarget, async () => { const r = await api("POST", `/api/sites/${s.id}/update-apps`, { apps: sel, force: $("#fo", d).checked }); d.close(); startJob(r.job_id, `Update apps on ${s.domain}`); });
       };
       $("#appadd", root).onclick = () => installAppDialog(s, info.available);
     },

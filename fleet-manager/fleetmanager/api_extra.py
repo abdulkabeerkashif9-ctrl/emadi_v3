@@ -445,6 +445,7 @@ def audit_list(q: str = "", user_filter: str = Query("", alias="user"), limit: i
 # ───────────────────────────── apps on a site ─────────────────────────────
 class SiteApps(BaseModel):
     apps: list[str] = Field(min_length=1, max_length=20)
+    force: bool = False
 
 
 @router.get("/sites/{sid}/apps")
@@ -472,8 +473,8 @@ def site_update_apps(sid: int, b: SiteApps, request: Request, u=Depends(need("su
     names = [n for n in b.apps if ops.NAME_RE.match(n)]
     if not names:
         raise HTTPException(400, "Choose at least one app")
-    audit(u, "site_update_apps", s["domain"], ", ".join(names), request)
-    return {"job_id": jobs.start("ops", f"Update apps on {s['domain']}: {', '.join(names)}", lambda log: ops.update_apps_job(sid, names, log), u["username"])}
+    audit(u, "site_update_apps", s["domain"], ", ".join(names) + (" (overwrite)" if b.force else ""), request)
+    return {"job_id": jobs.start("ops", f"Update apps on {s['domain']}: {', '.join(names)}", lambda log: ops.update_apps_job(sid, names, log, b.force), u["username"])}
 
 
 @router.post("/sites/{sid}/empty-app")

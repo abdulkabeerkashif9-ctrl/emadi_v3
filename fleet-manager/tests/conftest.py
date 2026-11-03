@@ -128,6 +128,14 @@ class FakeRunner:
             out = "\n".join(["frappe"] + FakeRunner.apps)
         elif "site_config.json" in cmd:
             out = "\n".join(FakeRunner.sites)
+        elif "status --porcelain" in cmd and "for a in" not in cmd:
+            out = FakeRunner.dirty
+        elif "git -C" in cmd and " remote" in cmd and "remote " not in cmd.split(" remote")[1][:1]:
+            out = "upstream\n"
+        elif "rev-parse --abbrev-ref HEAD" in cmd and "for a in" not in cmd:
+            out = "version-15\n"
+        elif "merge-base --is-ancestor" in cmd:
+            return (0 if not FakeRunner.diverged else 1), ""
         elif "bench version" in cmd:
             out = "frappe 15.1.0\n" + "".join(f"{a} 15.2.0\n" for a in FakeRunner.apps)
         elif "for a in apps/*/" in cmd:
@@ -190,6 +198,8 @@ def fake_ssh(monkeypatch):
     FakeRunner.tick = 0
     FakeRunner.site_installed = []
     FakeRunner.no_branch = False
+    FakeRunner.dirty = ""
+    FakeRunner.diverged = False
     FakeRunner.build_broken = False
     FakeRunner.drop_exit = 0
     FakeRunner.site_uninstalled = []

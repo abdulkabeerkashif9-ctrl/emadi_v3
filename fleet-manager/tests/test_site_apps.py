@@ -31,12 +31,26 @@ def test_install_app_takes_backup_fetches_and_installs(client, sid):
     assert "hrms" in db.q1("SELECT apps FROM sites WHERE id=?", (sid,))["apps"]
 
 
-def test_update_pulls_then_migrates(client, sid):
+def test_update_resets_each_app_to_the_remote_then_builds_and_migrates(client, sid):
+    FakeRunner.diverged = True                      # history differs (shallow clone / force push): must not fail like `git pull`
     j = wait_job(client, client.post(f"/api/sites/{sid}/update-apps", json={"apps": ["erpnext"]}).json()["job_id"])
     assert j["status"] == "done", j["log"]
+    assert "history differs" in j["log"]
     cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
-    i = next(i for i, c in enumerate(cmds) if "bench update --pull" in c and "--apps erpnext" in c)
-    assert any("migrate" in c for c in cmds[i:]) and any("backup --with-files" in c for c in cmds[:i])
+    assert not any("bench update" in c or "git pull" in c for c in cmds)
+    i = next(i for i, c in enumerate(cmds) if "reset --hard FETCH_HEAD" in c and "apps/erpnext" in c)
+    assert any("backup --with-files" in c for c in cmds[:i]) and any("fetch upstream version-15" in c for c in cmds[:i])
+    tail = cmds[i:]
+    assert [k for k in ("setup requirements", "bench build --apps erpnext", "migrate") if any(k in c for c in tail)] == ["setup requirements", "bench build --apps erpnext", "migrate"]
+
+
+def test_update_refuses_server_side_edits_unless_forced(client, sid):
+    FakeRunner.dirty = " M erpnext/hooks.py\n"
+    j = wait_job(client, client.post(f"/api/sites/{sid}/update-apps", json={"apps": ["erpnext"]}).json()["job_id"])
+    assert j["status"] == "failed" and "changes made directly on the server" in j["log"]
+    assert not any("reset --hard" in c[1] for c in FakeRunner.calls if c[0] == "run")
+    j = wait_job(client, client.post(f"/api/sites/{sid}/update-apps", json={"apps": ["erpnext"], "force": True}).json()["job_id"])
+    assert j["status"] == "done", j["log"]
 
 
 def test_update_rejects_bad_names_and_viewers(client, sid):

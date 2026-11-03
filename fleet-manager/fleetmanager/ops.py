@@ -280,9 +280,41 @@ def remove_server_app_job(server_id, name, log):
     log(f"\n{name} removed from {s['name']}.\n")
 
 
-def update_apps_job(site_id, names, log):
-    """Pull the latest code of the given apps (bench-wide: the code is shared by every site on the server),
-    then migrate this site. Other sites on the server pick up the new code on their next migrate."""
+def _git(r, s, app, args, stream=False, timeout=600):
+    return r.run(_bench(s, f"git -C {shlex.quote('apps/' + app)} {args}"), as_user=BENCH_USER, stream=stream, timeout=timeout)
+
+
+def _pull_app(r, s, app, force, log):
+    """Bring one app's code to the remote branch tip. A clean (deployed) copy is simply moved to the remote state, which also
+    works when the history diverged (shallow clones, force-pushed branches). Edits made on the server need force."""
+    code, out = _git(r, s, app, "status --porcelain -uno")
+    if code != 0:
+        raise ssh.SSHError(f"{app}: apps/{app} is not a git repository on the server")
+    if out.strip() and not force:
+        raise ssh.SSHError(f"{app} has changes made directly on the server:\n{out.strip()[:400]}\n"
+                           "Tick 'Overwrite changes made on the server' to replace them with the repository version.")
+    code, out = _git(r, s, app, "remote")
+    remotes = out.split()
+    remote = "upstream" if "upstream" in remotes or not remotes else remotes[0]
+    code, out = _git(r, s, app, "rev-parse --abbrev-ref HEAD")
+    branch = out.strip().splitlines()[-1] if out.strip() else ""
+    if code != 0 or not branch or branch == "HEAD":
+        raise ssh.SSHError(f"{app} is not on a branch on the server (detached HEAD); fix it manually with git checkout")
+    log(f"\n>>> {app}: fetching {remote}/{branch}\n")
+    code, out = _git(r, s, app, f"fetch {shlex.quote(remote)} {shlex.quote(branch)}", stream=True, timeout=1800)
+    if code != 0:
+        raise ssh.SSHError(f"git fetch failed for {app} (exit {code})")
+    ff, _ = _git(r, s, app, "merge-base --is-ancestor HEAD FETCH_HEAD")
+    if ff != 0:
+        log(f"{app}: the server's history differs from the repository's; using the repository version.\n")
+    code, _ = _git(r, s, app, "reset --hard FETCH_HEAD", stream=True)
+    if code != 0:
+        raise ssh.SSHError(f"git reset failed for {app} (exit {code})")
+
+
+def update_apps_job(site_id, names, log, force=False):
+    """Pull the latest code of the given apps (shared by every site on the server), rebuild, then migrate this site.
+    Other sites on the server pick up the new code at their next migrate."""
     site, s = get(site_id)
     domain = site["domain"]
     clean = [n for n in names if NAME_RE.match(n)]
@@ -291,14 +323,20 @@ def update_apps_job(site_id, names, log):
     with ssh.Runner(s, log) as r:
         log(f">>> Backing up {domain} before updating\n")
         _run(r, s, domain, "backup --with-files", "Safety backup")
-        log(f"\n>>> Updating {', '.join(clean)}\n")
-        code, _ = r.run(_bench(s, f"bench update --pull --requirements --apps {shlex.quote(','.join(clean))} --no-backup"), as_user=BENCH_USER, timeout=3600)
+        for n in clean:
+            _pull_app(r, s, n, force, log)
+        log("\n>>> Installing requirements\n")
+        code, _ = r.run(_bench(s, "bench setup requirements"), as_user=BENCH_USER, timeout=3600)
         if code != 0:
-            raise ssh.SSHError(f"bench update failed (exit {code}). Check the log above; the pre-update backup is on the Backups tab.")
+            raise ssh.SSHError(f"bench setup requirements failed (exit {code}). The code was updated but the site was not migrated; the pre-update backup is on the Backups tab.")
+        log("\n>>> Building assets\n")
+        code, _ = r.run(_bench(s, f"bench build --apps {shlex.quote(','.join(clean))}"), as_user=BENCH_USER, timeout=3600)
+        if code != 0:
+            raise ssh.SSHError(f"bench build failed (exit {code}). Check the log above.")
         log(f"\n>>> Migrating {domain}\n")
         code, _ = r.run(_site_cmd(s, domain, "migrate"), as_user=BENCH_USER)
         if code != 0:
-            raise ssh.SSHError(f"bench migrate failed (exit {code})")
+            raise ssh.SSHError(f"bench migrate failed (exit {code}). The pre-update backup is on the Backups tab.")
         r.run(_site_cmd(s, domain, "clear-cache"), as_user=BENCH_USER, stream=False)
         r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
         provision.sync_server(s, r, log)
