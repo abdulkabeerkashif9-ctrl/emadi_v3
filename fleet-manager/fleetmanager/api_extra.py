@@ -54,6 +54,14 @@ class OnIn(BaseModel):
     on: bool
 
 
+@router.post("/sites/{sid}/scheduler")
+def site_scheduler(sid: int, b: OnIn, request: Request, u=Depends(need("support"))):
+    s = _site(sid)
+    out = _run(ops.scheduler, sid, b.on)
+    audit(u, "site_scheduler_on" if b.on else "site_scheduler_off", s["domain"], "", request)
+    return out
+
+
 @router.post("/sites/{sid}/maintenance")
 def site_maintenance(sid: int, b: OnIn, request: Request, u=Depends(need("support"))):
     s = _site(sid)

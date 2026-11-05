@@ -268,6 +268,10 @@ const ACT = {
   golivecheck: el => busy(el, async () => { const s = siteById(el.dataset.id); await loadGolive($("#view"), s); }),
   golivemark: el => busy(null, async () => { await api("POST", `/api/sites/${el.dataset.id}/golive`, { provider_done: el.checked }); toast(el.checked ? "Marked as done" : "Reopened"); route(true); }),
   opmaint: el => busy(el, async () => { const on = el.dataset.on === "1"; await api("POST", `/api/sites/${el.dataset.id}/maintenance`, { on }); toast(`Maintenance mode ${on ? "on" : "off"}`); }),
+  opsched: el => busy(el, async () => {
+    const on = el.dataset.on === "1", r = await api("POST", `/api/sites/${el.dataset.id}/scheduler`, { on });
+    toast(on ? (r.maintenance ? "Scheduler enabled — but the site is suspended (maintenance mode), which also blocks background jobs" : "Scheduler enabled. Try the import again.") : "Scheduler disabled");
+  }),
   opcache: el => busy(el, async () => { await api("POST", `/api/sites/${el.dataset.id}/clear-cache`); toast("Cache cleared"); }),
   opbackup: el => busy(el, async () => { const s = siteById(el.dataset.id); const r = await api("POST", `/api/sites/${s.id}/backup`); startJob(r.job_id, `Backup ${s.domain}`); }),
   opmigrate: el => busy(null, async () => {
@@ -507,6 +511,7 @@ function siteOps({ s }) {
     html: `<div class="cards"><div class="card pad"><h3>Maintenance</h3>
         ${actRow("Maintenance mode", "Shows a maintenance page to visitors", `<div class="btnrow">${b("opmaint", "Turn on", "", 'data-on="1"')}${b("opmaint", "Turn off", "", 'data-on="0"')}</div>`)}
         ${actRow("Clear cache", "Fixes stale pages and settings", b("opcache", "Clear"))}
+        ${actRow("Background jobs (scheduler)", "Fix “Schedule is inactive. Cannot import data”", `<div class="btnrow">${b("opsched", "Enable", "", 'data-on="1"')}${b("opsched", "Disable", "", 'data-on="0"')}</div>`)}
         ${actRow("Run migrate", "Applies app updates to this site's database", b("opmigrate", "Migrate"))}
         ${actRow("Restart server services", `Restarts web, workers and nginx for <b>all sites</b> on ${esc(s.server_name)}`, `<button class="btn sm" data-act="oprestart" data-server="${s.server_id}">Restart</button>`)}</div>
       <div class="card pad"><h3>Access &amp; data</h3>

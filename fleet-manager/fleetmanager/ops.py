@@ -56,6 +56,25 @@ def maintenance(site_id, on: bool):
     return site
 
 
+def scheduler(site_id, on: bool):
+    """Turn the site's scheduler (background jobs: data import, emails, reports) on or off. 'Schedule is inactive' comes from here,
+    or from maintenance mode being on, or from the scheduler worker process being stopped."""
+    site, s = get(site_id)
+    d = site["domain"]
+    with ssh.Runner(s) as r:
+        if on:
+            _run(r, s, d, "enable-scheduler", "Enable scheduler")
+            r.run(_site_cmd(s, d, "scheduler resume"), as_user=BENCH_USER, stream=False)
+            code, out = r.run("supervisorctl status 2>&1 | grep -i schedule", sudo=True, stream=False)
+            running = "RUNNING" in out
+            if not running:
+                r.run("supervisorctl start all 2>&1", sudo=True, stream=False)
+        else:
+            _run(r, s, d, "disable-scheduler", "Disable scheduler")
+            running = None
+    return {"on": on, "worker_running": running, "maintenance": bool(site["suspended"])}
+
+
 def clear_cache(site_id):
     site, s = get(site_id)
     with ssh.Runner(s) as r:

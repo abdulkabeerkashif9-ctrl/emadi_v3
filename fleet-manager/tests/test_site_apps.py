@@ -179,3 +179,12 @@ def test_get_app_failure_names_the_missing_dependency_not_the_branch(client, sid
     FakeRunner.build_broken = True
     j = wait_job(client, client.post(f"/api/sites/{sid}/install-apps", json={"apps": ["garm"]}).json()["job_id"])
     assert j["status"] == "failed" and "emadi_v3" in j["log"] and "no branch" not in j["log"]
+
+
+def test_scheduler_enable_runs_enable_resume_and_checks_worker(client, sid):
+    r = client.post(f"/api/sites/{sid}/scheduler", json={"on": True})
+    assert r.status_code == 200 and r.json()["on"] is True
+    cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
+    assert any("enable-scheduler" in c for c in cmds) and any("scheduler resume" in c for c in cmds)
+    assert client.post(f"/api/sites/{sid}/scheduler", json={"on": False}).status_code == 200
+    assert any("disable-scheduler" in c[1] for c in FakeRunner.calls if c[0] == "run")

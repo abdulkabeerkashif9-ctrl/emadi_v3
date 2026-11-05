@@ -489,6 +489,8 @@ def upload_db_job(site_id, local_path, filename, log):
                     log("\n>>> Migrating\n")
                     r.run(ops._site_cmd(s, domain, "migrate"), as_user=BENCH_USER)
                     r.run(ops._site_cmd(s, domain, "clear-cache"), as_user=BENCH_USER, stream=False)
+                    r.run(ops._site_cmd(s, domain, "enable-scheduler"), as_user=BENCH_USER, stream=False)   # a dump from another system may carry it disabled
+                    r.run(ops._site_cmd(s, domain, "scheduler resume"), as_user=BENCH_USER, stream=False)
                     if not site["suspended"]:
                         r.run(ops._site_cmd(s, domain, "set-maintenance-mode off"), as_user=BENCH_USER, stream=False)
                     provision.sync_server(s, r, log)
