@@ -4,38 +4,30 @@ from frappe.utils import flt
 
 
 @frappe.whitelist()
-def create_sizing_program_from_weaving_contract(weaving_contract, item=None, beam_for=None):
+def create_sizing_program_from_weaving_contract(weaving_contract, item=None, beam_for=None, items=None):
 	"""Called by the "Sizing Program" button on a submitted, Open Weaving
-	Contract. The button first shows the user a popup listing every
-	Pile/Ground row in that contract's BOM Items (client-side, from the
-	already-loaded form) and asks them to pick one; `item` is that row's
-	Yarn Count (an Item link) and `beam_for` is that row's "for" value
-	(Pile or Ground) - sent back here just to disambiguate two rows that
-	happen to share the same yarn item.
+	Contract. The popup lists every Pile/Ground yarn still pending; `items`
+	is a JSON list of the ones ticked ([{"for": "Pile", "yarn_count": ...}]) -
+	ONE Sizing Program is made with a Yarn Details row for each (Pile and
+	Ground together). `item`/`beam_for` (single yarn) still work for old
+	callers.
 
-	Returns a brand-new, unsaved Sizing Program - same "server pre-fills,
-	user reviews and saves" pattern used everywhere else in this app - with
-	the Weaving Contract and Sales Order references set, ready to flow on
-	to Sizing Receipt when it's eventually created from this Sizing
-	Program via the existing "Create > Sizing Receipt" button.
+	Returns a brand-new, unsaved Sizing Program for the user to review.
 	"""
+	import json
+
 	wc = frappe.get_doc("Weaving Contract", weaving_contract)
 
-	row = _pick_bom_row(wc, item, beam_for)
-	if not row:
+	picks = []
+	if items:
+		picks = json.loads(items) if isinstance(items, str) else items
+	else:
+		row = _pick_bom_row(wc, item, beam_for)
+		if row:
+			picks = [{"for": row.get("for"), "yarn_count": row.get("yarn_count")}]
+	if not picks:
 		frappe.throw(
 			_("No Pile/Ground item with a Yarn Count found in this Weaving Contract's BOM Items.")
-		)
-
-	# Sizing Program covers the whole pending LBS of this Pile/Ground yarn:
-	# every BOM row of the same yarn is added together, minus what earlier
-	# Sizing Programs already took.
-	pending = _get_pending(wc, row.get("for"), row.get("yarn_count"))
-	if pending["pending"] <= 0.001:
-		frappe.throw(
-			_("A Sizing Program has already been created for the full LBS of {0} ({1}).").format(
-				row.get("yarn_count"), row.get("for")
-			)
 		)
 
 	sizing_program = frappe.new_doc("Sizing Program")
@@ -43,36 +35,48 @@ def create_sizing_program_from_weaving_contract(weaving_contract, item=None, bea
 	sizing_program.sales_order = wc.get("sales_order")
 	sizing_program.weaver = _get_weaver(wc)
 	sizing_program.fabric_construction = wc.get("construction")
-	# "Quality" mirrors Fabric Construction here, same as the Quality/Article
-	# pairing used when Fabric Construction records are auto-created from the
-	# Towel Costing Sheet (see towel-costing-multi-article.md) - flagged as a
-	# judgment call, not an explicit spec.
-	sizing_program.quality = wc.get("construction")
-	# "Brand" - the yarn item picked in the popup.
-	sizing_program.item = row.get("yarn_count")
-	sizing_program.lbs_issue = pending["pending"]
-	# "Item Name" (item_returnable) - the Beam item this same Weaving Contract
-	# already auto-created on its own submit (create_beam_items in
-	# weaving_contract.py uses the identical BEAM-{for}-{yarn_count} naming),
-	# so it's guaranteed to exist by the time this button is clickable
-	# (docstatus == 1). Flagged as a judgment call.
-	beam_item_code = _beam_item_code(row.get("for"), row.get("yarn_count"))
-	if frappe.db.exists("Item", beam_item_code):
-		sizing_program.item_returnable = beam_item_code
+	# Quality on Sizing Program is a Cotton/Viscose Select - left for the user
+	# (setting it to the finish item made saving fail).
 
-	# Yarn Details row (a Sizing Program can hold many finish items / yarns /
-	# contracts - add more rows by hand, giving rows that share one beam the
-	# same Sizing Beam).
-	sizing_program.append(
-		"yarn_items",
-		{
-			"weaving_contract": wc.name,
-			"finish_item": wc.get("construction"),
-			"yarn_item": row.get("yarn_count"),
-			"lbs_per_bag": flt(row.get("lbs_per_bag")) or 100,
-			"lbs_issue": pending["pending"],
-		},
-	)
+	total_pending = 0.0
+	for pick in picks:
+		beam_for_ = pick.get("for")
+		yarn = (pick.get("yarn_count") or "").strip()
+		pending = _get_pending(wc, beam_for_, yarn)
+		if pending["pending"] <= 0.001:
+			frappe.throw(
+				_("A Sizing Program has already been created for the full LBS of {0} ({1}).").format(
+					yarn, beam_for_
+				)
+			)
+		bom_row = next(
+			(
+				r
+				for r in wc.bom_items or []
+				if r.get("for") == beam_for_ and (r.get("yarn_count") or "").strip() == yarn
+			),
+			None,
+		)
+		beam_item_code = _beam_item_code(beam_for_, yarn)
+		sizing_program.append(
+			"yarn_items",
+			{
+				"weaving_contract": wc.name,
+				"finish_item": wc.get("construction"),
+				"yarn_item": yarn,
+				"beam_item": beam_item_code if frappe.db.exists("Item", beam_item_code) else None,
+				"lbs_per_bag": (flt(bom_row.get("lbs_per_bag")) if bom_row else 0) or 100,
+				"lbs_issue": pending["pending"],
+			},
+		)
+		total_pending += pending["pending"]
+
+	first = picks[0]
+	sizing_program.item = (first.get("yarn_count") or "").strip()
+	sizing_program.lbs_issue = total_pending
+	first_beam = _beam_item_code(first.get("for"), (first.get("yarn_count") or "").strip())
+	if frappe.db.exists("Item", first_beam):
+		sizing_program.item_returnable = first_beam
 
 	return sizing_program
 
@@ -105,7 +109,8 @@ def _get_pending(wc, beam_for, yarn_count):
 		select coalesce(sum(y.lbs_issue), 0)
 		from `tabSizing Program Yarn` y
 		inner join `tabSizing Program` sp on sp.name = y.parent and y.parenttype = 'Sizing Program'
-		where y.weaving_contract = %s and y.yarn_item = %s and sp.item_returnable = %s and sp.docstatus != 2
+		where y.weaving_contract = %s and y.yarn_item = %s
+		and coalesce(nullif(y.beam_item, ''), sp.item_returnable) = %s and sp.docstatus != 2
 		""",
 		(wc.name, yarn_count, _beam_item_code(beam_for, yarn_count)),
 	)[0][0]
@@ -149,9 +154,54 @@ def _get_weaver(wc):
 	weaver/customer field under a different name, say so and this can read
 	straight from that instead.
 	"""
+	# Weaving Contract's Weaver is a Supplier now, but Sizing Program.weaver
+	# links to Customer - only use it when a Customer of that name exists
+	# (otherwise saving fails with "Could not find Weaver").
 	weaver = wc.get("weaver") or wc.get("customer")
-	if weaver:
+	if weaver and frappe.db.exists("Customer", weaver):
 		return weaver
 	if wc.get("sales_order"):
 		return frappe.db.get_value("Sales Order", wc.sales_order, "customer")
 	return None
+
+
+@frappe.whitelist()
+def get_yarn_rows_for_contracts(weaving_contracts):
+	"""For the "Get Items From Weaving Contract" button on Sizing Program:
+	a Yarn Details row for every Pile/Ground yarn that still needs a Sizing
+	Program, across all the given (submitted) Weaving Contracts."""
+	import json
+
+	if isinstance(weaving_contracts, str):
+		weaving_contracts = json.loads(weaving_contracts)
+
+	out = []
+	for name in weaving_contracts or []:
+		wc = frappe.get_doc("Weaving Contract", name)
+		if wc.docstatus != 1:
+			frappe.throw(_("Weaving Contract {0} is not submitted.").format(name))
+		for data in get_sizing_program_items(name):
+			yarn = data["yarn_count"]
+			beam_item = _beam_item_code(data["for"], yarn)
+			bom_row = next(
+				(
+					r
+					for r in wc.bom_items or []
+					if r.get("for") == data["for"] and (r.get("yarn_count") or "").strip() == yarn
+				),
+				None,
+			)
+			out.append(
+				{
+					"weaving_contract": wc.name,
+					"finish_item": wc.get("construction"),
+					"yarn_item": yarn,
+					"beam_item": beam_item if frappe.db.exists("Item", beam_item) else None,
+					"lbs_per_bag": (flt(bom_row.get("lbs_per_bag")) if bom_row else 0) or 100,
+					"lbs_issue": data["pending"],
+					"beam_for": data["for"],
+				}
+			)
+	if not out:
+		frappe.msgprint(_("No Pile/Ground yarn is left to create a Sizing Program for in the selected contracts."))
+	return out

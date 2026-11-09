@@ -480,29 +480,32 @@ function open_sizing_program_dialog(frm) {
 				return
 			}
 
-			let by_label = {}
-			let options = rows.map(function(row) {
-				let label = `${row.for} - ${row.yarn_count} (${format_number(row.pending)} lbs)`
-				by_label[label] = row
-				return label
+			// One tick-box per Pile/Ground yarn, all ticked: a single Sizing
+			// Program is created for every ticked yarn (Pile and Ground together).
+			let fields = rows.map(function(row, i) {
+				return {
+					fieldname: 'pick_' + i,
+					fieldtype: 'Check',
+					default: 1,
+					label: `${row.for} - ${row.yarn_count} (${format_number(row.pending)} lbs)`
+				}
 			})
 
 			frappe.prompt(
-				[{
-					fieldname: 'row',
-					label: __('Pile/Ground Item'),
-					fieldtype: 'Select',
-					options: options,
-					reqd: 1
-				}],
+				fields,
 				function(values) {
-					let selected = by_label[values.row]
+					let picked = rows.filter(function(row, i) { return values['pick_' + i] })
+					if (!picked.length) {
+						frappe.msgprint(__("Select at least one item."))
+						return
+					}
 					frappe.call({
 						method: "emadi_v3.emadi.events.create_sizing_program_from_weaving_contract.create_sizing_program_from_weaving_contract",
 						args: {
 							weaving_contract: frm.doc.name,
-							item: selected.yarn_count,
-							beam_for: selected.for
+							items: JSON.stringify(picked.map(function(p) {
+								return { "for": p.for, yarn_count: p.yarn_count }
+							}))
 						},
 						freeze: true,
 						callback: function(r) {
@@ -513,7 +516,7 @@ function open_sizing_program_dialog(frm) {
 						}
 					})
 				},
-				__('Select Pile/Ground Item'),
+				__('Select Pile/Ground Items'),
 				__('Create')
 			)
 		}
