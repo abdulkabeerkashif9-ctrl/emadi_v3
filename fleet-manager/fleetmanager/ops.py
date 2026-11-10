@@ -75,6 +75,25 @@ def scheduler(site_id, on: bool):
     return {"on": on, "worker_running": running, "maintenance": bool(site["suspended"])}
 
 
+def developer_mode(site_id, on=None):
+    """Read (on=None) or set `developer_mode` in the site's site_config.json. Returns the resulting state."""
+    import json as _json
+    site, s = get(site_id)
+    d = site["domain"]
+    path = f"{s['bench_path']}/sites/{d}/site_config.json"
+    with ssh.Runner(s) as r:
+        if on is not None:
+            _run(r, s, d, f"set-config developer_mode {1 if on else 0}", "Developer mode")
+            r.run(_site_cmd(s, d, "clear-cache"), as_user=BENCH_USER, stream=False)
+            r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER, stream=False)
+        code, out = r.run(f"cat {shlex.quote(path)}", sudo=True, stream=False)
+    try:
+        cfg = _json.loads(out) if code == 0 else {}
+    except ValueError:
+        cfg = {}
+    return {"on": bool(cfg.get("developer_mode"))}
+
+
 def clear_cache(site_id):
     site, s = get(site_id)
     with ssh.Runner(s) as r:

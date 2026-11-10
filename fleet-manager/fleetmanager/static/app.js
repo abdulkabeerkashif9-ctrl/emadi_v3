@@ -272,6 +272,11 @@ const ACT = {
     const on = el.dataset.on === "1", r = await api("POST", `/api/sites/${el.dataset.id}/scheduler`, { on });
     toast(on ? (r.maintenance ? "Scheduler enabled — but the site is suspended (maintenance mode), which also blocks background jobs" : "Scheduler enabled. Try the import again.") : "Scheduler disabled");
   }),
+  opdev: el => busy(el, async () => {
+    const on = el.dataset.on === "1";
+    if (on && !await confirmBox("Turn on developer mode", "Lets you create and edit DocTypes, reports and scripts in the browser (saved into app files), and shows detailed errors. Don't leave it on for customers' live sites.", "Turn on")) return;
+    await api("POST", `/api/sites/${el.dataset.id}/developer-mode`, { on }); toast(`Developer mode ${on ? "on" : "off"}`); route(true);
+  }),
   opcache: el => busy(el, async () => { await api("POST", `/api/sites/${el.dataset.id}/clear-cache`); toast("Cache cleared"); }),
   opbackup: el => busy(el, async () => { const s = siteById(el.dataset.id); const r = await api("POST", `/api/sites/${s.id}/backup`); startJob(r.job_id, `Backup ${s.domain}`); }),
   opmigrate: el => busy(null, async () => {
@@ -506,12 +511,14 @@ async function loadGolive(root, s) {
 }
 
 function siteOps({ s }) {
-  const id = s.id, mountOps = async root => { const box = $("#lastrow", root); if (!box) return; const g = await latestBackup(s).catch(() => null); if (box.isConnected) box.innerHTML = lastBackupRow(s, g); }, b = (act, label, cls = "", extra = "") => `<button class="btn sm ${cls}" data-act="${act}" data-id="${id}" ${extra}>${label}</button>`;
+  const id = s.id, devRow = on => actRow("Developer mode", on ? "<b>On</b>: DocTypes, reports and scripts can be edited in the browser" : "Off. Turn on to create or edit DocTypes and scripts in the browser", `<button class="btn sm" data-act="opdev" data-id="${s.id}" data-on="${on ? 0 : 1}">${on ? "Turn off" : "Turn on"}</button>`),
+    mountOps = async root => { const dv = $("#devrow", root); if (dv) api("GET", `/api/sites/${s.id}/developer-mode`).then(r => { if (dv.isConnected) dv.innerHTML = devRow(r.on); }).catch(e => { dv.innerHTML = actRow("Developer mode", esc(e.message), ""); }); const box = $("#lastrow", root); if (!box) return; const g = await latestBackup(s).catch(() => null); if (box.isConnected) box.innerHTML = lastBackupRow(s, g); }, b = (act, label, cls = "", extra = "") => `<button class="btn sm ${cls}" data-act="${act}" data-id="${id}" ${extra}>${label}</button>`;
   return {
     html: `<div class="cards"><div class="card pad"><h3>Maintenance</h3>
         ${actRow("Maintenance mode", "Shows a maintenance page to visitors", `<div class="btnrow">${b("opmaint", "Turn on", "", 'data-on="1"')}${b("opmaint", "Turn off", "", 'data-on="0"')}</div>`)}
         ${actRow("Clear cache", "Fixes stale pages and settings", b("opcache", "Clear"))}
         ${actRow("Background jobs (scheduler)", "Fix “Schedule is inactive. Cannot import data”", `<div class="btnrow">${b("opsched", "Enable", "", 'data-on="1"')}${b("opsched", "Disable", "", 'data-on="0"')}</div>`)}
+        ${can("admin") ? `<div id="devrow">${actRow("Developer mode", "Loading…", "")}</div>` : ""}
         ${actRow("Run migrate", "Applies app updates to this site's database", b("opmigrate", "Migrate"))}
         ${actRow("Restart server services", `Restarts web, workers and nginx for <b>all sites</b> on ${esc(s.server_name)}`, `<button class="btn sm" data-act="oprestart" data-server="${s.server_id}">Restart</button>`)}</div>
       <div class="card pad"><h3>Access &amp; data</h3>

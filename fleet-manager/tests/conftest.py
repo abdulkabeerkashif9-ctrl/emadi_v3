@@ -122,7 +122,11 @@ class FakeRunner:
             return (0 if FakeRunner.leftover is not None else 1), ""
         if cmd.startswith("test -f"):
             return (0 if FakeRunner.leftover == "real" else 1), ""
-        if "/proc/loadavg" in cmd:
+        if "set-config developer_mode" in cmd:
+            FakeRunner.dev = cmd.split("developer_mode ")[1].split()[0] == "1"
+        elif cmd.startswith("cat ") and cmd.rstrip("'").endswith("/site_config.json"):
+            out = '{"db_name": "x", "developer_mode": 1}' if FakeRunner.dev else '{"db_name": "x"}'
+        elif "/proc/loadavg" in cmd:
             out = "LOAD 0.30\nCORES 2\nMEM 4000 1200\nDISK 35\nOS Ubuntu 22.04 LTS\n"
         elif cmd.startswith("ls -1") and "/apps" in cmd:
             out = "\n".join(["frappe"] + FakeRunner.apps)
@@ -198,6 +202,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.tick = 0
     FakeRunner.site_installed = []
     FakeRunner.no_branch = False
+    FakeRunner.dev = False
     FakeRunner.dirty = ""
     FakeRunner.diverged = False
     FakeRunner.build_broken = False

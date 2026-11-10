@@ -54,6 +54,20 @@ class OnIn(BaseModel):
     on: bool
 
 
+@router.get("/sites/{sid}/developer-mode")
+def site_dev_mode_get(sid: int, _=Depends(need("support"))):
+    _site(sid)
+    return _run(ops.developer_mode, sid)
+
+
+@router.post("/sites/{sid}/developer-mode")
+def site_dev_mode(sid: int, b: OnIn, request: Request, u=Depends(need("admin"))):
+    s = _site(sid)
+    out = _run(ops.developer_mode, sid, b.on)
+    audit(u, "site_developer_mode_on" if b.on else "site_developer_mode_off", s["domain"], "", request)
+    return out
+
+
 @router.post("/sites/{sid}/scheduler")
 def site_scheduler(sid: int, b: OnIn, request: Request, u=Depends(need("support"))):
     s = _site(sid)

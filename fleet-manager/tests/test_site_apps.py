@@ -188,3 +188,16 @@ def test_scheduler_enable_runs_enable_resume_and_checks_worker(client, sid):
     assert any("enable-scheduler" in c for c in cmds) and any("scheduler resume" in c for c in cmds)
     assert client.post(f"/api/sites/{sid}/scheduler", json={"on": False}).status_code == 200
     assert any("disable-scheduler" in c[1] for c in FakeRunner.calls if c[0] == "run")
+
+
+def test_developer_mode_toggle_and_state(client, sid):
+    assert client.get(f"/api/sites/{sid}/developer-mode").json() == {"on": False}
+    assert client.post(f"/api/sites/{sid}/developer-mode", json={"on": True}).json() == {"on": True}
+    cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
+    assert any("set-config developer_mode 1" in c for c in cmds)
+    assert client.post(f"/api/sites/{sid}/developer-mode", json={"on": False}).json() == {"on": False}
+    c = TestClient(main.app)
+    if not db.q1("SELECT 1 FROM users WHERE username='sue4'"):
+        client.post("/api/team", json={"username": "sue4", "password": "password123", "role": "support"})
+    c.post("/api/auth/login", json={"username": "sue4", "password": "password123"})
+    assert c.post(f"/api/sites/{sid}/developer-mode", json={"on": True}).status_code == 403 and c.get(f"/api/sites/{sid}/developer-mode").status_code == 200
