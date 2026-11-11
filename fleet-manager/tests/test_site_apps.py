@@ -222,3 +222,14 @@ def test_app_missing_from_apps_txt_is_registered_and_built(client, sid):
     cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
     i = next(i for i, c in enumerate(cmds) if "sites/apps.txt" in c and "echo " in c)
     assert any("install-app hrms" in c for c in cmds[i:]) and any("bench build --app hrms" in c for c in cmds[i:])
+
+
+def test_update_switches_the_server_copy_to_the_repository_on_the_apps_page(client, sid):
+    db.x("INSERT OR REPLACE INTO apps(name,title,git_url,branch,requires) VALUES('erpnext','ERPNext','https://github.com/me/Other-Repo.git','version-15','')")
+    try:
+        j = wait_job(client, client.post(f"/api/sites/{sid}/update-apps", json={"apps": ["erpnext"]}).json()["job_id"])
+        assert j["status"] == "done", j["log"]
+        assert "switching to the Apps page repository" in j["log"]
+        assert any("remote set-url upstream https://github.com/me/Other-Repo.git" in c[1] for c in FakeRunner.calls if c[0] == "run")
+    finally:
+        db.x("UPDATE apps SET git_url='https://github.com/frappe/erpnext', branch=NULL WHERE name='erpnext'")

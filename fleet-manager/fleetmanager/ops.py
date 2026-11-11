@@ -342,6 +342,17 @@ def _pull_app(r, s, app, force, log):
     code, out = _git(r, s, app, "remote")
     remotes = out.split()
     remote = "upstream" if "upstream" in remotes or not remotes else remotes[0]
+    reg = db.q1("SELECT git_url FROM apps WHERE name=?", (app,))
+    if reg and reg["git_url"]:
+        # the registry (Apps page) is the source of truth for where an app comes from: if the server copy was cloned from
+        # another repository, point it at the registry's one before fetching
+        _, cur = _git(r, s, app, f"remote get-url {shlex.quote(remote)}")
+        norm = lambda u: re.sub(r"(\.git)?/*$", "", (u or "").strip().lower())
+        if cur.strip() and norm(cur) != norm(reg["git_url"]):
+            log(f"\n>>> {app}: the server copy comes from {cur.strip()}, the Apps page says {reg['git_url']}; switching to the Apps page repository\n")
+            code, _ = _git(r, s, app, f"remote set-url {shlex.quote(remote)} {shlex.quote(reg['git_url'])}")
+            if code != 0:
+                raise ssh.SSHError(f"Could not change the repository of {app}")
     code, out = _git(r, s, app, "rev-parse --abbrev-ref HEAD")
     branch = out.strip().splitlines()[-1] if out.strip() else ""
     if code != 0 or not branch or branch == "HEAD":

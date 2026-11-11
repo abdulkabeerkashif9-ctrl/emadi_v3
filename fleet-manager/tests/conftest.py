@@ -25,6 +25,7 @@ class FakeRunner:
     backups, offsite, written, relayed = {}, {}, {}, []
     backup_fail = offsite_fail = restore_fail = False
     tick = 0
+    remote_url = "https://github.com/frappe/erpnext"
     leftover = None  # None: no dir; 'failed': dir without site_config.json; 'real': working site
 
     def __init__(self, server, log=None):
@@ -146,6 +147,11 @@ class FakeRunner:
             out = "\n".join(FakeRunner.sites)
         elif "status --porcelain" in cmd and "for a in" not in cmd:
             out = FakeRunner.dirty
+        elif "remote get-url" in cmd:
+            return 0, FakeRunner.remote_url + "\n"
+        elif "remote set-url" in cmd:
+            FakeRunner.remote_url = shlex.split(cmd.split("set-url ")[1])[1]
+            return 0, ""
         elif "git -C" in cmd and " remote" in cmd and "remote " not in cmd.split(" remote")[1][:1]:
             out = "upstream\n"
         elif "rev-parse --abbrev-ref HEAD" in cmd and "for a in" not in cmd:
@@ -218,6 +224,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.no_branch = False
     FakeRunner.not_importable = False
     FakeRunner.not_in_apps_txt = False
+    FakeRunner.remote_url = "https://github.com/frappe/erpnext"
     FakeRunner.dev = False
     FakeRunner.dirty = ""
     FakeRunner.diverged = False
