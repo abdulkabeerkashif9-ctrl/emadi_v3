@@ -122,6 +122,13 @@ class FakeRunner:
             return (0 if FakeRunner.leftover is not None else 1), ""
         if cmd.startswith("test -f"):
             return (0 if FakeRunner.leftover == "real" else 1), ""
+        if "env/bin/python -c" in cmd and "import " in cmd:
+            if FakeRunner.not_importable:
+                return 1, "ModuleNotFoundError"
+            return 0, ""
+        if "env/bin/python" in cmd and "pip install" in cmd and "-e apps/" in cmd:
+            FakeRunner.not_importable = False
+            return 0, ""
         if "set-config developer_mode" in cmd:
             FakeRunner.dev = cmd.split("developer_mode ")[1].split()[0] == "1"
         elif cmd.startswith("cat ") and cmd.rstrip("'").endswith("/site_config.json"):
@@ -202,6 +209,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.tick = 0
     FakeRunner.site_installed = []
     FakeRunner.no_branch = False
+    FakeRunner.not_importable = False
     FakeRunner.dev = False
     FakeRunner.dirty = ""
     FakeRunner.diverged = False

@@ -201,3 +201,13 @@ def test_developer_mode_toggle_and_state(client, sid):
         client.post("/api/team", json={"username": "sue4", "password": "password123", "role": "support"})
     c.post("/api/auth/login", json={"username": "sue4", "password": "password123"})
     assert c.post(f"/api/sites/{sid}/developer-mode", json={"on": True}).status_code == 403 and c.get(f"/api/sites/{sid}/developer-mode").status_code == 200
+
+
+def test_app_folder_present_but_not_installed_is_repaired_before_install_app(client, sid):
+    FakeRunner.apps.append("hrms")            # folder is on the server already, so get-app is skipped
+    FakeRunner.not_importable = True
+    j = wait_job(client, client.post(f"/api/sites/{sid}/install-apps", json={"apps": ["hrms"]}).json()["job_id"])
+    assert j["status"] == "done", j["log"]
+    cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
+    i = next(i for i, c in enumerate(cmds) if "pip install" in c and "-e apps/hrms" in c)
+    assert any("install-app hrms" in c for c in cmds[i:]) and "installing it now" in j["log"]

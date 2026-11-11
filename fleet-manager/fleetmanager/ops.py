@@ -251,6 +251,8 @@ def install_apps_job(site_id, names, log):
             if n not in server_has:
                 provision.get_app(s, r, n, log)
         for n in todo:
+            provision.ensure_importable(s, r, n, log)
+        for n in todo:
             log(f"\n>>> Installing {n} on {domain}\n")
             code, _ = r.run(_site_cmd(s, domain, f"install-app {shlex.quote(n)}"), as_user=BENCH_USER)
             if code != 0:
