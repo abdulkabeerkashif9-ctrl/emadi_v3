@@ -150,6 +150,8 @@ class FakeRunner:
             out = "upstream\n"
         elif "rev-parse --abbrev-ref HEAD" in cmd and "for a in" not in cmd:
             out = "version-15\n"
+        elif "rev-parse --verify" in cmd:
+            return 0, "abc\n"
         elif "merge-base --is-ancestor" in cmd:
             return (0 if not FakeRunner.diverged else 1), ""
         elif "bench version" in cmd:

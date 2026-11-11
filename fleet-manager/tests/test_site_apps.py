@@ -38,8 +38,8 @@ def test_update_resets_each_app_to_the_remote_then_builds_and_migrates(client, s
     assert "history differs" in j["log"]
     cmds = [c[1] for c in FakeRunner.calls if c[0] == "run"]
     assert not any("bench update" in c or "git pull" in c for c in cmds)
-    i = next(i for i, c in enumerate(cmds) if "reset --hard FETCH_HEAD" in c and "apps/erpnext" in c)
-    assert any("backup --with-files" in c for c in cmds[:i]) and any("fetch upstream version-15" in c for c in cmds[:i])
+    i = next(i for i, c in enumerate(cmds) if "reset --hard refs/remotes/upstream/version-15" in c and "apps/erpnext" in c)
+    assert any("backup --with-files" in c for c in cmds[:i]) and any("fetch --force upstream +refs/heads/version-15:refs/remotes/upstream/version-15" in c for c in cmds[:i])
     tail = cmds[i:]
     assert [k for k in ("setup requirements", "bench build --apps erpnext", "migrate") if any(k in c for c in tail)] == ["setup requirements", "bench build --apps erpnext", "migrate"]
 

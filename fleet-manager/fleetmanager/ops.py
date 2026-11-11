@@ -347,15 +347,22 @@ def _pull_app(r, s, app, force, log):
     if code != 0 or not branch or branch == "HEAD":
         raise ssh.SSHError(f"{app} is not on a branch on the server (detached HEAD); fix it manually with git checkout")
     log(f"\n>>> {app}: fetching {remote}/{branch}\n")
-    code, out = _git(r, s, app, f"fetch {shlex.quote(remote)} {shlex.quote(branch)}", stream=True, timeout=1800)
+    # fetch into a named remote-tracking ref instead of FETCH_HEAD: FETCH_HEAD is not reliable on shallow clones or after a
+    # repository change, and a named ref can be checked before anything is reset
+    ref = f"refs/remotes/{remote}/{branch}"
+    code, out = _git(r, s, app, f"fetch --force {shlex.quote(remote)} {shlex.quote('+refs/heads/' + branch + ':' + ref)}", stream=True, timeout=1800)
     if code != 0:
-        raise ssh.SSHError(f"git fetch failed for {app} (exit {code})")
-    ff, _ = _git(r, s, app, "merge-base --is-ancestor HEAD FETCH_HEAD")
+        raise ssh.SSHError(f"git fetch failed for {app} (exit {code}). Does the branch '{branch}' exist in the repository?")
+    code, _ = _git(r, s, app, f"rev-parse --verify --quiet {shlex.quote(ref + '^{commit}')}")
+    if code != 0:
+        raise ssh.SSHError(f"{app}: the repository has no commits on branch '{branch}' (is it empty, or is the branch name different? "
+                           "Check the branch under Apps).")
+    ff, _ = _git(r, s, app, f"merge-base --is-ancestor HEAD {shlex.quote(ref)}")
     if ff != 0:
         log(f"{app}: the server's history differs from the repository's; using the repository version.\n")
-    code, _ = _git(r, s, app, "reset --hard FETCH_HEAD", stream=True)
+    code, out = _git(r, s, app, f"reset --hard {shlex.quote(ref)}", stream=True)
     if code != 0:
-        raise ssh.SSHError(f"git reset failed for {app} (exit {code})")
+        raise ssh.SSHError(f"git reset failed for {app} (exit {code}): {out.strip()[-300:]}")
 
 
 def update_apps_job(site_id, names, log, force=False):
