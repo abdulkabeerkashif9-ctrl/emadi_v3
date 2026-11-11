@@ -126,6 +126,11 @@ class FakeRunner:
             if FakeRunner.not_importable:
                 return 1, "ModuleNotFoundError"
             return 0, ""
+        if "grep -qx" in cmd and "sites/apps.txt" in cmd:
+            return (1 if FakeRunner.not_in_apps_txt else 0), ""
+        if "sites/apps.txt" in cmd and "echo " in cmd:
+            FakeRunner.not_in_apps_txt = False
+            return 0, ""
         if "env/bin/python" in cmd and "pip install" in cmd and "-e apps/" in cmd:
             FakeRunner.not_importable = False
             return 0, ""
@@ -210,6 +215,7 @@ def fake_ssh(monkeypatch):
     FakeRunner.site_installed = []
     FakeRunner.no_branch = False
     FakeRunner.not_importable = False
+    FakeRunner.not_in_apps_txt = False
     FakeRunner.dev = False
     FakeRunner.dirty = ""
     FakeRunner.diverged = False

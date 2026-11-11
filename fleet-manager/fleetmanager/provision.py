@@ -394,21 +394,31 @@ def get_app(s, r, name, log):
 
 
 def ensure_importable(s, r, name, log):
-	"""An app folder can exist on the server without being installed in the bench's Python environment (a get-app that died
-	during `pip install`, or an older broken copy). Then install-app fails with 'No module named ...'. Detect that and
-	install the app into the environment (editable), so the site install can go on."""
+	"""An app folder can exist on the server without being installed in the bench's Python environment or listed in
+	sites/apps.txt (a get-app that died during `pip install`, or an older broken copy). Then install-app fails with
+	'No module named ...' or 'not in apps.txt'. Repair both. Returns True when something had to be repaired (the caller then
+	builds the app's assets, which get-app would normally have done)."""
 	q = shlex.quote
+	repaired = False
 	chk = lambda: r.run(_bench(s, f"env/bin/python -c {q('import ' + name)}"), as_user=BENCH_USER, stream=False)[0]
-	if chk() == 0:
-		return
-	log(f"\n>>> {name} is on the server but not installed in the bench environment; installing it now\n")
-	# app names are validated (NAME_RE) before they get here
-	code, out = r.run(_bench(s, f"(uv pip install --quiet -e apps/{name} --python env/bin/python) || env/bin/pip install -q -e apps/{name}"),
-					as_user=BENCH_USER, timeout=1800)
-	if code != 0 or chk() != 0:
-		raise ssh.SSHError(
-			f"{name} could not be installed into the bench environment (see the log above). The copy on the server may be "
-			f"outdated or broken: use Servers > Apps > Delete from server on {name}, then install it again to download it fresh.")
+	if chk() != 0:
+		repaired = True
+		log(f"\n>>> {name} is on the server but not installed in the bench environment; installing it now\n")
+		# --no-deps: bench manages frappe's own dependencies; resolving them again here fails (pypika is a git URL dependency).
+		# app names are validated (NAME_RE) before they get here
+		code, out = r.run(_bench(s, f"(uv pip install --quiet --no-deps -e apps/{name} --python env/bin/python) "
+									f"|| env/bin/pip install -q --no-deps -e apps/{name}"), as_user=BENCH_USER, timeout=1800)
+		if code != 0 or chk() != 0:
+			raise ssh.SSHError(
+				f"{name} could not be installed into the bench environment (see the log above). The copy on the server may be "
+				f"outdated or broken: use Servers > Apps > Delete from server on {name}, then install it again to download it fresh.")
+	code, out = r.run(_bench(s, f"grep -qx {q(name)} sites/apps.txt"), as_user=BENCH_USER, stream=False)
+	if code != 0:
+		repaired = True
+		log(f"\n>>> Adding {name} to sites/apps.txt\n")
+		r.run(_bench(s, f"[ -z \"$(tail -c1 sites/apps.txt)\" ] || echo >> sites/apps.txt; echo {q(name)} >> sites/apps.txt"),
+			as_user=BENCH_USER, stream=False)
+	return repaired
 
 
 REDIS_PORTS = (11000, 13000)  # bench's own redis queue / cache (not the system redis on 6379)

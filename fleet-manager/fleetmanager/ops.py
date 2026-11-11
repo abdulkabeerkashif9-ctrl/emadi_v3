@@ -250,13 +250,15 @@ def install_apps_job(site_id, names, log):
         for n in todo:
             if n not in server_has:
                 provision.get_app(s, r, n, log)
-        for n in todo:
-            provision.ensure_importable(s, r, n, log)
+        repaired = [n for n in todo if provision.ensure_importable(s, r, n, log)]
         for n in todo:
             log(f"\n>>> Installing {n} on {domain}\n")
             code, _ = r.run(_site_cmd(s, domain, f"install-app {shlex.quote(n)}"), as_user=BENCH_USER)
             if code != 0:
                 raise ssh.SSHError(f"install-app {n} failed (exit {code}). The site keeps running; a backup from before is on the Backups tab.")
+        for n in repaired:
+            log(f"\n>>> Building assets of {n}\n")
+            r.run(_bench(s, f"bench build --app {shlex.quote(n)}"), as_user=BENCH_USER, timeout=3600)
         r.run(_bench(s, "bench restart || true"), as_user=BENCH_USER)
         provision.sync_server(s, r, log)
         _store_apps(s, r, site)
