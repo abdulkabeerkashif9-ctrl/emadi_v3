@@ -34,7 +34,12 @@ def _site_cmd(s, domain, cmd):
 def _run(r, s, domain, cmd, what):
     code, out = r.run(_site_cmd(s, domain, cmd), as_user=BENCH_USER, stream=False)
     if code != 0:
-        raise OpError(f"{what} failed: {out.strip()[-600:]}")
+        hint = ""
+        m = re.search(r"No module named '([A-Za-z0-9_]+)'", out)
+        if m:
+            hint = (f"\n\nHint: bench is trying to load an app called '{m.group(1)}' that is not installed. Remove the line "
+                    f"'{m.group(1)}' from sites/apps.txt on the server (or reinstall that app), then try again.")
+        raise OpError(f"{what} failed: {out.strip()[-600:]}{hint}")
     return out
 
 
