@@ -8,7 +8,41 @@
  "engine": "InnoDB",
  "field_order": [
   "fabric_production_section",
-  "emadi_settings_item"
+  "emadi_settings_item",
+  "sec_so_0",
+  "so_default_warehouse",
+  "sec_cpy_1",
+  "cpy_target_warehouse",
+  "sec_yarn_2",
+  "yarn_issue_source_warehouse",
+  "col_2",
+  "yarn_issue_target_warehouse",
+  "sec_sizing_3",
+  "sizing_program_source_warehouse",
+  "col_3",
+  "sizing_program_target_warehouse",
+  "sec_sizing_4",
+  "sizing_receipt_source_warehouse",
+  "col_4",
+  "sizing_receipt_target_warehouse",
+  "sec_weaving_5",
+  "weaving_receipt_source_warehouse",
+  "col_5",
+  "weaving_receipt_target_warehouse",
+  "sec_dlp_6",
+  "dlp_weft_warehouse",
+  "col_6",
+  "dlp_fancy_warehouse",
+  "dlp_pile_warehouse",
+  "dlp_ground_warehouse",
+  "sec_dlm_7",
+  "dlm_finish_warehouse",
+  "sec_dyeing_8",
+  "dyeing_source_warehouse",
+  "col_8",
+  "dyeing_target_warehouse",
+  "sec_mapping",
+  "warehouse_defaults"
  ],
  "fields": [
   {
@@ -21,12 +55,198 @@
    "fieldname": "fabric_production_section",
    "fieldtype": "Section Break",
    "label": "Fabric Production"
+  },
+  {
+   "fieldname": "sec_so_0",
+   "fieldtype": "Section Break",
+   "label": "Sales Order - Default Warehouses"
+  },
+  {
+   "fieldname": "so_default_warehouse",
+   "fieldtype": "Link",
+   "label": "Sales Order Default Warehouse",
+   "options": "Warehouse",
+   "description": "Delivery warehouse (set_warehouse) filled into new Sales Orders"
+  },
+  {
+   "fieldname": "sec_cpy_1",
+   "fieldtype": "Section Break",
+   "label": "Customer Provided Yarn - Default Warehouses"
+  },
+  {
+   "fieldname": "cpy_target_warehouse",
+   "fieldtype": "Link",
+   "label": "Customer Provided Yarn Warehouse",
+   "options": "Warehouse",
+   "description": "Where yarn received from the customer / weaver (Material Receipt) is stored"
+  },
+  {
+   "fieldname": "sec_yarn_2",
+   "fieldtype": "Section Break",
+   "label": "Yarn Issue to Weaver - Default Warehouses"
+  },
+  {
+   "fieldname": "yarn_issue_source_warehouse",
+   "fieldtype": "Link",
+   "label": "Yarn Issue Source Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "col_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "yarn_issue_target_warehouse",
+   "fieldtype": "Link",
+   "label": "Yarn Issue Target Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "sec_sizing_3",
+   "fieldtype": "Section Break",
+   "label": "Sizing Program - Default Warehouses"
+  },
+  {
+   "fieldname": "sizing_program_source_warehouse",
+   "fieldtype": "Link",
+   "label": "Sizing Program Source Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "col_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sizing_program_target_warehouse",
+   "fieldtype": "Link",
+   "label": "Sizing Program Target Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "sec_sizing_4",
+   "fieldtype": "Section Break",
+   "label": "Sizing Receipt - Default Warehouses"
+  },
+  {
+   "fieldname": "sizing_receipt_source_warehouse",
+   "fieldtype": "Link",
+   "label": "Sizing Receipt Source Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "col_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sizing_receipt_target_warehouse",
+   "fieldtype": "Link",
+   "label": "Sizing Receipt Target Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "sec_weaving_5",
+   "fieldtype": "Section Break",
+   "label": "Weaving Receipt - Default Warehouses"
+  },
+  {
+   "fieldname": "weaving_receipt_source_warehouse",
+   "fieldtype": "Link",
+   "label": "Weaving Receipt Source Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "col_5",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "weaving_receipt_target_warehouse",
+   "fieldtype": "Link",
+   "label": "Weaving Receipt Target Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "sec_dlp_6",
+   "fieldtype": "Section Break",
+   "label": "Daily Loom Production - Default Warehouses"
+  },
+  {
+   "fieldname": "dlp_weft_warehouse",
+   "fieldtype": "Link",
+   "label": "Weft Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "col_6",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "dlp_fancy_warehouse",
+   "fieldtype": "Link",
+   "label": "Fancy Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "dlp_pile_warehouse",
+   "fieldtype": "Link",
+   "label": "Pile Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "dlp_ground_warehouse",
+   "fieldtype": "Link",
+   "label": "Ground Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "sec_dlm_7",
+   "fieldtype": "Section Break",
+   "label": "DLM - Default Warehouses"
+  },
+  {
+   "fieldname": "dlm_finish_warehouse",
+   "fieldtype": "Link",
+   "label": "DLM Finish Warehouse",
+   "options": "Warehouse",
+   "description": "Default finished-goods warehouse of DLM"
+  },
+  {
+   "fieldname": "sec_dyeing_8",
+   "fieldtype": "Section Break",
+   "label": "Dyeing - Default Warehouses"
+  },
+  {
+   "fieldname": "dyeing_source_warehouse",
+   "fieldtype": "Link",
+   "label": "Dyeing Source Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "col_8",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "dyeing_target_warehouse",
+   "fieldtype": "Link",
+   "label": "Dyeing Target Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "sec_mapping",
+   "fieldtype": "Section Break",
+   "label": "Apply Warehouse Defaults To Other Documents",
+   "description": "For documents whose code is not in this app: every empty warehouse field listed here is filled from the setting above when the document is created or saved. Leave 'Table Field' empty for a field on the document itself."
+  },
+  {
+   "fieldname": "warehouse_defaults",
+   "fieldtype": "Table",
+   "label": "Warehouse Defaults",
+   "options": "Emadi Warehouse Default"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-06-25 16:53:44.940537",
+ "modified": "2026-11-11 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Emadiv3",
  "name": "Emadi Settings",

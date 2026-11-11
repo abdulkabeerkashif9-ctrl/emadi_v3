@@ -1,0 +1,72 @@
+{
+ "actions": [],
+ "creation": "2026-11-11 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "document_type",
+  "table_field",
+  "fieldname",
+  "condition_field",
+  "condition_value",
+  "setting"
+ ],
+ "fields": [
+  {
+   "fieldname": "document_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Document Type",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "table_field",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Table Field",
+   "description": "Child table fieldname on the document (blank = field is on the document itself)"
+  },
+  {
+   "fieldname": "fieldname",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Warehouse Field",
+   "reqd": 1,
+   "description": "Fieldname to fill, e.g. source_warehouse"
+  },
+  {
+   "fieldname": "condition_field",
+   "fieldtype": "Data",
+   "label": "Only When Field",
+   "description": "Optional: only rows where this field ..."
+  },
+  {
+   "fieldname": "condition_value",
+   "fieldtype": "Data",
+   "label": "Equals",
+   "description": "... has this value, e.g. Weft"
+  },
+  {
+   "fieldname": "setting",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Use Setting",
+   "options": "so_default_warehouse\ncpy_target_warehouse\nyarn_issue_source_warehouse\nyarn_issue_target_warehouse\nsizing_program_source_warehouse\nsizing_program_target_warehouse\nsizing_receipt_source_warehouse\nsizing_receipt_target_warehouse\nweaving_receipt_source_warehouse\nweaving_receipt_target_warehouse\ndlp_weft_warehouse\ndlp_fancy_warehouse\ndlp_pile_warehouse\ndlp_ground_warehouse\ndlm_finish_warehouse\ndyeing_source_warehouse\ndyeing_target_warehouse",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-11 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Emadiv3",
+ "name": "Emadi Warehouse Default",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

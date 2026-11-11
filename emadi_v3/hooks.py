@@ -13,7 +13,7 @@ app_license = "mit"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/emadi_v3/css/emadi_v3.css"
-# app_include_js = "/assets/emadi_v3/js/emadi_v3.js"
+app_include_js = "/assets/emadi_v3/js/emadi_defaults.js"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/emadi_v3/css/emadi_v3.css"
@@ -121,6 +121,10 @@ doctype_js = {"Delivery Note" : "public/js/dn.js","Stock Entry" : "public/js/sto
 # Hook on document methods and events
 
 doc_events = {
+    "*": {
+        # fills empty warehouse fields from Emadi Settings > Apply Warehouse Defaults To Other Documents
+        "before_validate": "emadi_v3.emadiv3.emadi_defaults.apply_defaults"
+    },
     "Delivery Note": {
         "on_submit": "emadi_v3.emadiv3.events.create_dn.onsubmit"
     },
