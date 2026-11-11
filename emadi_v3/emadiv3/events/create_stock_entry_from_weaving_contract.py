@@ -1,6 +1,8 @@
 import frappe
 from frappe.model.document import Document
 
+from emadi_v3.emadiv3.emadi_defaults import get_default_warehouse
+
 @frappe.whitelist()
 def create_stock_entry_from_weaving_contract(weaving_contract):
     # Fetch the Weaving Contract document
@@ -18,6 +20,8 @@ def create_stock_entry_from_weaving_contract(weaving_contract):
     stock_entry.weaving_contract = weaving_contract  # Link back to Weaving Contract
     stock_entry.weaver = contract.weaver  # Link back to Weaving Contract
 
+    warehouse = get_default_warehouse("cpy_target_warehouse")      # Emadi Settings > Customer Provided Yarn
+
     # Loop through child items (bom_items) and add them to Stock Entry items
     for item in contract.bom_items:
         stock_entry.append("items", {
@@ -26,7 +30,7 @@ def create_stock_entry_from_weaving_contract(weaving_contract):
             "uom": item.uom,
             "stock_uom": item.uom,
             "allow_zero_valuation_rate": 1,
-            "t_warehouse": "Customer Warehouse - ET"
+            "t_warehouse": warehouse
         })
 
     # Return the Stock Entry name to open in the form view

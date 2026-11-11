@@ -2,3 +2,4 @@
 emadi_v3.patches.rename_module_emadi_to_emadiv3
 
 [post_model_sync]
+emadi_v3.patches.seed_warehouse_defaults

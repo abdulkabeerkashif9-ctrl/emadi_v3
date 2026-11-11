@@ -1,6 +1,8 @@
 import frappe
 from frappe import _
 
+from emadi_v3.emadiv3.emadi_defaults import get_default_warehouse
+
 # "Weaving Receipt" button on Weaving Contract (shown only when Type =
 # External). Builds an unsaved Weaving Receipt with one Items row
 # prefilled from this contract - reuses the exact same row shape as
@@ -29,17 +31,15 @@ from frappe import _
 # so it was just a harmless but meaningless extra attribute on the child
 # doc; now popped off and used to set the header field instead.
 
-SOURCE_WAREHOUSE = "Supplier - PT"
-TARGET_WAREHOUSE = "Finished Goods - PT"
+# Warehouses come from Emadi Settings (Weaving Receipt) - no hardcoded names any more.
 
 
 @frappe.whitelist()
 def create_weaving_receipt_from_weaving_contract(weaving_contract):
 	from mjfsd_v3.loom_production.events.create_weaving_receipt import get_weaving_contract_items
 
-	for wh in (SOURCE_WAREHOUSE, TARGET_WAREHOUSE):
-		if not frappe.db.exists("Warehouse", wh):
-			frappe.throw(_("Warehouse {0} doesn't exist - check the exact name/spelling.").format(wh))
+	SOURCE_WAREHOUSE = get_default_warehouse("weaving_receipt_source_warehouse")
+	TARGET_WAREHOUSE = get_default_warehouse("weaving_receipt_target_warehouse")
 
 	wc = frappe.get_doc("Weaving Contract", weaving_contract)
 	if wc.docstatus != 1:

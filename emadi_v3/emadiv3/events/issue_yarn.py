@@ -4,6 +4,8 @@ import frappe
 from frappe import _
 from frappe.utils import flt
 
+from emadi_v3.emadiv3.emadi_defaults import get_default_warehouse
+
 # "Issue Yarn" button on Weaving Contract (submitted only) - "same workflow
 # like issue fabric in dyeing contract is needed in Weaving Contract ...
 # user will enter qty of each yarn mentioned in weaving contract in the
@@ -31,8 +33,7 @@ from frappe.utils import flt
 # (see claude/dyeing-workflow.md, 2026-09-16 follow-up). No separate
 # on_submit/on_cancel hooks.py entries needed for this one at all.
 
-SOURCE_WAREHOUSE = "Source - PT"
-TARGET_WAREHOUSE = "Supplier - PT"
+# Warehouses come from Emadi Settings (Yarn Issue to Weaver) - no hardcoded names any more.
 
 
 @frappe.whitelist()
@@ -44,9 +45,8 @@ def issue_yarn(weaving_contract, rows):
 	if isinstance(rows, str):
 		rows = json.loads(rows)
 
-	for wh in (SOURCE_WAREHOUSE, TARGET_WAREHOUSE):
-		if not frappe.db.exists("Warehouse", wh):
-			frappe.throw(_("Warehouse {0} doesn't exist - check the exact name/spelling.").format(wh))
+	SOURCE_WAREHOUSE = get_default_warehouse("yarn_issue_source_warehouse")
+	TARGET_WAREHOUSE = get_default_warehouse("yarn_issue_target_warehouse")
 
 	wc = frappe.get_doc("Weaving Contract", weaving_contract)
 	if wc.docstatus != 1:
