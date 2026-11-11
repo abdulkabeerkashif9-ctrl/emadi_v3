@@ -628,24 +628,33 @@ function siteApps({ s, srv, apps }) {
   const staticRows = `<tr><td><div class="cell-main">Frappe Framework</div><div class="cell-sub mono">frappe</div></td><td class="mono">${esc(ver(srv.version))}</td><td></td></tr>
       ${names.map(n => { const a = reg[n]; return `<tr><td><div class="cell-main">${esc(a ? a.title : n)}</div><div class="cell-sub mono">${esc(n)}</div></td><td class="mono">${esc(a ? (a.branch || ver(srv.version)) : "—")}</td><td></td></tr>`; }).join("")}`;
   if (!can("support")) return { html: `<div class="card tbl"><table><thead><tr><th>App</th><th>Branch</th><th></th></tr></thead><tbody>${staticRows}</tbody></table></div>` };
+  // rows (with their checkboxes) are drawn at once from what is already known; version / update status fill in afterwards
+  const title = n => (reg[n] || {}).title || n;
+  const rowHtml = a => `<tr data-app="${esc(a.name)}"><td><input type="checkbox" class="appck" value="${esc(a.name)}" aria-label="Select ${esc(a.title)}" ${a.behind ? "checked" : ""}></td>
+        <td><div class="cell-main">${esc(a.title)}</div><div class="cell-sub mono">${esc(a.name)}</div></td><td class="mono">${esc(a.version || "—")}<div class="cell-sub">${esc(a.branch || "")} ${esc(a.commit || "")}</div></td>
+        <td>${a.behind === undefined ? '<span class="chip">Checking…</span>' : a.behind ? `<span class="chip warn">${a.behind} update${a.behind > 1 ? "s" : ""} available</span>` : '<span class="chip ok">Up to date</span>'}</td>
+        <td style="text-align:right">${can("admin") && a.name !== "frappe" ? `<button class="btn sm danger rmapp" data-n="${esc(a.name)}" data-t="${esc(a.title)}">Remove…</button>` : ""}</td></tr>`;
+  const tableHtml = list => `<table><thead><tr><th style="width:36px"></th><th>App</th><th>Version</th><th>Status</th><th></th></tr></thead><tbody>${list.map(rowHtml).join("")}</tbody></table>`;
+  const initial = [...names, "frappe"].map(n => ({ name: n, title: n === "frappe" ? "Frappe Framework" : title(n) }));
   return {
     html: `<div class="toolbar"><div style="flex:1" class="muted" id="appinfo">Apps installed on this site.</div><button class="btn" id="appupd" disabled>${icon("refresh")}Update selected</button><button class="btn" id="appempty" data-act="emptyapp" data-id="${s.id}">Create &amp; install empty app</button><button class="btn primary" id="appadd">${icon("plus")}Install app</button></div>
-      <div class="card tbl" id="appbox"><table><thead><tr><th style="width:36px"></th><th>App</th><th>Version</th><th>Status</th></tr></thead><tbody>${staticRows.replace(/<td><div/g, "<td></td><td><div").replace(/<td class="mono">/g, '<td class="mono">')}</tbody></table></div>
-      <p class="hint">Updating pulls the newest code of an app for <b>every site on ${esc(s.server_name)}</b> (they share it) and then migrates this site. A backup of this site is taken first. Other sites pick up the update at their next migrate.</p>`,
+      <div class="card tbl" id="appbox">${tableHtml(initial)}</div>
+      <p class="hint">Tick the apps to update, then press <b>Update selected</b>. Updating pulls the newest code of an app for <b>every site on ${esc(s.server_name)}</b> (they share it) and then migrates this site. A backup of this site is taken first. Other sites pick up the update at their next migrate.</p>`,
     async mount(root) {
-      let info;
-      try { info = await api("GET", `/api/sites/${s.id}/apps`); } catch (e) { $("#appinfo", root).textContent = e.message; return; }
-      if (!$("#appbox", root)) return;
-      const rows = info.installed.filter(a => a.name !== "frappe").concat(info.installed.filter(a => a.name === "frappe"));
-      $("#appbox", root).innerHTML = `<table><thead><tr><th style="width:36px"></th><th>App</th><th>Version</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(a => `<tr><td><input type="checkbox" class="appck" value="${esc(a.name)}" aria-label="Select ${esc(a.title)}" ${a.behind ? "checked" : ""}></td>
-        <td><div class="cell-main">${esc(a.title)}</div><div class="cell-sub mono">${esc(a.name)}</div></td><td class="mono">${esc(a.version || "—")}<div class="cell-sub">${esc(a.branch || "")} ${esc(a.commit || "")}</div></td>
-        <td>${a.behind ? `<span class="chip warn">${a.behind} update${a.behind > 1 ? "s" : ""} available</span>` : '<span class="chip ok">Up to date</span>'}</td>
-        <td style="text-align:right">${can("admin") && a.name !== "frappe" ? `<button class="btn sm danger rmapp" data-n="${esc(a.name)}" data-t="${esc(a.title)}">Remove…</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
-      $$(".rmapp", root).forEach(b => b.onclick = () => removeAppDialog(s, b.dataset.n, b.dataset.t));
-      const n = info.installed.filter(a => a.behind).length;
-      $("#appinfo", root).textContent = n ? `${n} app${n > 1 ? "s have" : " has"} updates available.` : "Everything is up to date.";
-      const upd = $("#appupd", root), cks = () => $$(".appck", root).filter(c => c.checked).map(c => c.value);
-      const sync = () => { upd.disabled = !cks().length; }; $$(".appck", root).forEach(c => c.onchange = sync); sync();
+      const box = $("#appbox", root), upd = $("#appupd", root);
+      const cks = () => $$(".appck", root).filter(c => c.checked).map(c => c.value);
+      // event delegation: works however often the table is redrawn
+      box.addEventListener("change", e => { if (e.target.classList.contains("appck")) upd.disabled = !cks().length; });
+      box.addEventListener("click", e => { const b = e.target.closest(".rmapp"); if (b) removeAppDialog(s, b.dataset.n, b.dataset.t); });
+      const paint = info => {
+        const keep = new Set(cks());
+        const rows = info.installed.filter(a => a.name !== "frappe").concat(info.installed.filter(a => a.name === "frappe"));
+        box.innerHTML = tableHtml(rows);
+        $$(".appck", root).forEach(c => { if (keep.has(c.value)) c.checked = true; });
+        upd.disabled = !cks().length;
+        return info;
+      };
+      $("#appadd", root).onclick = () => busy(null, async () => installAppDialog(s, (await api("GET", `/api/sites/${s.id}/apps?check=false`)).available));
       upd.onclick = () => {
         const sel = cks();
         const d = dialog("Update apps", `<p class="muted" style="margin:0 0 8px">Update <b>${esc(sel.join(", "))}</b>? A backup of ${esc(s.domain)} is taken first. The code is shared, so <b>every site on ${esc(s.server_name)}</b> gets the new version and may briefly restart.</p>
@@ -653,37 +662,22 @@ function siteApps({ s, srv, apps }) {
           `<button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Update</button>`, { noFocus: true });
         $("#go", d).onclick = e => busy(e.currentTarget, async () => { const r = await api("POST", `/api/sites/${s.id}/update-apps`, { apps: sel, force: $("#fo", d).checked }); d.close(); startJob(r.job_id, `Update apps on ${s.domain}`); });
       };
-      $("#appadd", root).onclick = () => installAppDialog(s, info.available);
+      // 1) quick: versions, no network     2) slower: which apps have newer code upstream
+      try {
+        const quick = await api("GET", `/api/sites/${s.id}/apps?check=false`);
+        if (!box.isConnected) return;
+        quick.installed.forEach(a => { a.behind = undefined; });
+        paint(quick);
+        $("#appinfo", root).textContent = "Checking for updates…";
+        const full = await api("GET", `/api/sites/${s.id}/apps`);
+        if (!box.isConnected) return;
+        paint(full);
+        const n = full.installed.filter(a => a.behind).length;
+        $("#appinfo", root).textContent = n ? `${n} app${n > 1 ? "s have" : " has"} updates available.` : "Everything is up to date.";
+      } catch (e) {
+        if (box.isConnected) $("#appinfo", root).textContent = "Could not check for updates: " + e.message;
+      }
     },
-  };
-}
-const EMPTY_RESERVED = new Set(["frappe", "erpnext", "hrms", "payments", "lending", "healthcare", "education", "webshop", "crm", "helpdesk", "insights", "builder", "print_designer", "test", "tests"]);
-function emptyAppName(domain) {
-  let n = domain.split(".")[0].toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "site";
-  if (!/^[a-z]/.test(n)) n = "app_" + n;
-  if (EMPTY_RESERVED.has(n)) n += "_app";
-  return n.slice(0, 60);
-}
-function uploadDbDialog(s) {
-  const d = dialog("Upload database", `<div class="note warn" style="margin-top:0">This <b>replaces all data</b> of ${esc(s.domain)} with the contents of the file. A safety backup is taken first, and the Administrator password becomes the one stored in that database.</div>
-    <label class="l">Database file <span class="faint">(.sql or .sql.gz)</span></label><input type="file" id="fl" accept=".sql,.gz">
-    <label class="l">Type <b>${esc(s.domain)}</b> to confirm</label><input id="cf" autocomplete="off" spellcheck="false">
-    <div class="meter" id="pg" hidden style="margin-top:14px"><i style="width:0"></i></div><div class="hint" id="pgt"></div>`,
-    `<button class="btn" data-close>Cancel</button><button class="btn danger" id="go" disabled>Upload and replace</button>`, { noFocus: true });
-  const ok = () => { const f = $("#fl", d).files[0]; $("#go", d).disabled = !(f && /\.(sql|sql\.gz)$/i.test(f.name) && $("#cf", d).value.trim().toLowerCase() === s.domain); };
-  $("#fl", d).onchange = ok; $("#cf", d).oninput = ok;
-  $("#go", d).onclick = e => {
-    const btn = e.currentTarget, f = $("#fl", d).files[0]; btn.disabled = true; $("#fl", d).disabled = true; $("#cf", d).disabled = true; $("#pg", d).hidden = false;
-    const x = new XMLHttpRequest();
-    x.open("PUT", `/api/sites/${s.id}/upload-db?filename=${encodeURIComponent(f.name)}&confirm=${encodeURIComponent($("#cf", d).value.trim())}`);
-    x.upload.onprogress = ev => { if (ev.lengthComputable) { $("#pg i", d).style.width = (100 * ev.loaded / ev.total) + "%"; $("#pgt", d).textContent = `Uploading… ${Math.round(ev.loaded / 1048576)} of ${Math.round(ev.total / 1048576) || 1} MB`; } };
-    x.onload = () => {
-      let r = {}; try { r = JSON.parse(x.responseText); } catch { /* ignore */ }
-      if (x.status === 200) { d.close(); startJob(r.job_id, `Upload database to ${s.domain}`); return; }
-      toast(typeof r.detail === "string" ? r.detail : "Upload failed (" + x.status + ")", true); d.close();
-    };
-    x.onerror = () => { toast("Upload failed: connection lost", true); d.close(); };
-    x.send(f);
   };
 }
 function removeAppDialog(s, name, title) {

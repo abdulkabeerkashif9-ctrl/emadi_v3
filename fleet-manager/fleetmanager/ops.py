@@ -202,20 +202,24 @@ def migrate_job(site_id, log):
 
 
 # ------------------------------------------------------------ apps on a site
-APP_INFO = ("for a in apps/*/; do n=$(basename $a); [ -d $a.git ] || continue; "
-            "git -C $a fetch -q origin 2>/dev/null; "
-            "echo \"$n|$(git -C $a rev-parse --abbrev-ref HEAD)|$(git -C $a rev-parse --short HEAD)|"
-            "$(git -C $a rev-list --count HEAD..@{u} 2>/dev/null || echo 0)\"; done")
+def _app_info_cmd(check):
+    """One line per app: name|branch|commit|commits behind upstream. With check=True each app is fetched (in parallel, 25 s each)."""
+    fetch = "timeout 25 git -C $a fetch -q 2>/dev/null; " if check else ""
+    one = ('n=$(basename $a); [ -d $a.git ] || exit 0; ' + fetch +
+           'echo "$n|$(git -C $a rev-parse --abbrev-ref HEAD)|$(git -C $a rev-parse --short HEAD)|'
+           '$(git -C $a rev-list --count HEAD..@{u} 2>/dev/null || echo 0)"')
+    return f'for a in apps/*/; do ( {one} ) & done; wait'
 
 
-def apps_info(site_id):
-    """Installed apps of a site with version and number of upstream commits not yet pulled, plus installable apps."""
+def apps_info(site_id, check=True):
+    """Installed apps of a site with version and number of upstream commits not yet pulled (only when check=True: that needs a
+    network fetch per app), plus installable apps."""
     site, s = get(site_id)
     with ssh.Runner(s) as r:
         mine = provision.site_apps(s, r, site["domain"])
         code, out = r.run(_bench(s, "bench version 2>/dev/null"), as_user=BENCH_USER, stream=False, timeout=60)
         versions = {l.split()[0]: l.split()[1] for l in out.splitlines() if code == 0 and len(l.split()) >= 2}
-        code, out = r.run(_bench(s, APP_INFO), as_user=BENCH_USER, stream=False, timeout=300)
+        code, out = r.run(_bench(s, _app_info_cmd(check)), as_user=BENCH_USER, stream=False, timeout=120)
         git = {}
         for l in out.splitlines():
             p = l.split("|")

@@ -471,9 +471,9 @@ class SiteApps(BaseModel):
 
 
 @router.get("/sites/{sid}/apps")
-def site_apps_info(sid: int, _=Depends(need("support"))):
+def site_apps_info(sid: int, check: bool = True, _=Depends(need("support"))):
     try:
-        return ops.apps_info(sid)
+        return ops.apps_info(sid, check)
     except (ops.OpError, ssh.SSHError) as e:
         raise HTTPException(400, str(e))
 
