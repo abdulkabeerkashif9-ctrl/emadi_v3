@@ -363,7 +363,11 @@ def _pull_app(r, s, app, force, log):
     ref = f"refs/remotes/{remote}/{branch}"
     code, out = _git(r, s, app, f"fetch --force {shlex.quote(remote)} {shlex.quote('+refs/heads/' + branch + ':' + ref)}", stream=True, timeout=1800)
     if code != 0:
-        raise ssh.SSHError(f"git fetch failed for {app} (exit {code}). Does the branch '{branch}' exist in the repository?")
+        low = out.lower()
+        if "could not read username" in low or "authentication failed" in low or "repository not found" in low or "terminal prompts disabled" in low:
+            raise ssh.SSHError(f"{app}: the server cannot read the repository (it is private, or the address is wrong). Make the GitHub "
+                               "repository public, or give the server access (deploy key / token), then try again.")
+        raise ssh.SSHError(f"git fetch failed for {app} (exit {code}): {out.strip()[-300:]} - does the branch '{branch}' exist in the repository?")
     code, _ = _git(r, s, app, f"rev-parse --verify --quiet {shlex.quote(ref + '^{commit}')}")
     if code != 0:
         raise ssh.SSHError(f"{app}: the repository has no commits on branch '{branch}' (is it empty, or is the branch name different? "
