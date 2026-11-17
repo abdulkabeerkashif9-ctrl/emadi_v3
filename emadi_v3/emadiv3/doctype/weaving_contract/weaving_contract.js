@@ -122,22 +122,33 @@ frappe.ui.form.on('Weaving Contract', {
 			}
 		}
 
-		// 2026-09-30 - Customer Provided yarn request, for Commercial contracts only
-		// (no longer depends on the weaver).
+		// Commercial contracts: "Gate Pass" opens a Material Receipt Stock Entry that lists every Yarn Item
+		// of the contract with its quantity (BOM rows of the same yarn are added together). It disappears
+		// once that Stock Entry has been created.
 		if (frm.doc.docstatus == 1 && frm.doc.type == "Commercial") {
-			frm.add_custom_button(__('Create Material Request for Yarn'), function() {
-				frappe.call({
-					method: "emadi_v3.emadiv3.events.customer_yarn_material_request.make_customer_yarn_material_request",
-					args: { weaving_contract: frm.doc.name },
-					freeze: true,
-					callback: function(r) {
-						if (!r.exc && r.message) {
-							frappe.model.sync(r.message);
-							frappe.set_route("Form", r.message.doctype, r.message.name);
+			frappe.db.get_value("Stock Entry", {
+				weaving_contract: frm.doc.name,
+				purpose: "Material Receipt",
+				docstatus: ["!=", 2]
+			}, "name").then(function(res) {
+				if (res && res.message && res.message.name) {
+					return;
+				}
+				frm.remove_custom_button(__('Gate Pass'));
+				frm.add_custom_button(__('Gate Pass'), function() {
+					frappe.call({
+						method: "emadi_v3.emadi.events.create_stock_entry_from_weaving_contract.create_stock_entry_from_weaving_contract",
+						args: { weaving_contract: frm.doc.name },
+						freeze: true,
+						callback: function(r) {
+							if (!r.exc && r.message) {
+								frappe.model.sync(r.message);
+								frappe.set_route("Form", r.message.doctype, r.message.name);
+							}
 						}
-					}
-				});
-			}).css('background-color', '#2490EF').css('color', '#ffffff');
+					});
+				}).css('background-color', '#007e00').css('color', '#ffffff').css('font-weight', 'bold');
+			});
 		}
 
 		// Fabric Qty is derived from the yarn lbs when linked to a Sales Order
@@ -487,7 +498,7 @@ function open_sizing_program_dialog(frm) {
 					fieldname: 'pick_' + i,
 					fieldtype: 'Check',
 					default: 1,
-					label: `${row.for} - ${row.yarn_count} (${format_number(row.pending)} lbs)`
+					label: `${row.finish_item ? row.finish_item + ' - ' : ''}${row.for} - ${row.yarn_count} (${format_number(row.pending)} lbs)`
 				}
 			})
 
@@ -504,7 +515,7 @@ function open_sizing_program_dialog(frm) {
 						args: {
 							weaving_contract: frm.doc.name,
 							items: JSON.stringify(picked.map(function(p) {
-								return { "for": p.for, yarn_count: p.yarn_count }
+								return { "for": p.for, yarn_count: p.yarn_count, finish_item: p.finish_item }
 							}))
 						},
 						freeze: true,

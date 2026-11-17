@@ -42,7 +42,8 @@ def create_sizing_program_from_weaving_contract(weaving_contract, item=None, bea
 	for pick in picks:
 		beam_for_ = pick.get("for")
 		yarn = (pick.get("yarn_count") or "").strip()
-		pending = _get_pending(wc, beam_for_, yarn)
+		finish = pick.get("finish_item") or None
+		pending = _get_pending(wc, beam_for_, yarn, finish)
 		if pending["pending"] <= 0.001:
 			frappe.throw(
 				_("A Sizing Program has already been created for the full LBS of {0} ({1}).").format(
@@ -50,11 +51,7 @@ def create_sizing_program_from_weaving_contract(weaving_contract, item=None, bea
 				)
 			)
 		bom_row = next(
-			(
-				r
-				for r in wc.bom_items or []
-				if r.get("for") == beam_for_ and (r.get("yarn_count") or "").strip() == yarn
-			),
+			(r for r in _matching_bom_rows(wc, beam_for_, yarn, finish)),
 			None,
 		)
 		beam_item_code = _beam_item_code(beam_for_, yarn)
@@ -62,18 +59,18 @@ def create_sizing_program_from_weaving_contract(weaving_contract, item=None, bea
 			"yarn_items",
 			{
 				"weaving_contract": wc.name,
-				"finish_item": wc.get("construction"),
+				"finish_item": finish or (bom_row.get("finish_item") if bom_row else None) or wc.get("construction"),
+				"weaving_contract_lbs": pending["total"],
 				"yarn_item": yarn,
 				"beam_item": beam_item_code if frappe.db.exists("Item", beam_item_code) else None,
 				"lbs_per_bag": (flt(bom_row.get("lbs_per_bag")) if bom_row else 0) or 100,
-				"lbs_issue": pending["pending"],
+				# LBS Issue is calculated on the row from Net Meter x Ends / 768.1 / Yarn Count
 			},
 		)
 		total_pending += pending["pending"]
 
 	first = picks[0]
 	sizing_program.item = (first.get("yarn_count") or "").strip()
-	sizing_program.lbs_issue = total_pending
 	first_beam = _beam_item_code(first.get("for"), (first.get("yarn_count") or "").strip())
 	if frappe.db.exists("Item", first_beam):
 		sizing_program.item_returnable = first_beam
@@ -85,25 +82,39 @@ def _beam_item_code(beam_for, yarn_count):
 	return f"BEAM-{beam_for}-{yarn_count}"
 
 
-def _get_pending(wc, beam_for, yarn_count):
-	"""Total LBS of this (Pile/Ground, yarn) across the contract's BOM Items,
-	how much existing Sizing Programs already issued, and what is left."""
-	total = sum(
-		flt(r.get("yarn_qty"))
+def _row_finish_item(wc, row):
+	"""Finish Item of a BOM Items row (multi item contracts keep it on the row; single item ones use the contract's own)."""
+	return row.get("finish_item") or wc.get("construction")
+
+
+def _matching_bom_rows(wc, beam_for, yarn_count, finish_item=None):
+	return [
+		r
 		for r in wc.bom_items or []
-		if r.get("for") == beam_for and (r.get("yarn_count") or "").strip() == (yarn_count or "").strip()
-	)
-	# Old-style programs (single yarn in the header) ...
-	issued = frappe.db.sql(
-		"""
-		select coalesce(sum(lbs_issue), 0)
-		from `tabSizing Program` sp
-		where weaving_contract = %s and item = %s and item_returnable = %s and docstatus != 2
-		and not exists (select 1 from `tabSizing Program Yarn` y where y.parent = sp.name)
-		""",
-		(wc.name, yarn_count, _beam_item_code(beam_for, yarn_count)),
-	)[0][0]
-	# ... plus programs using the Yarn Details table (row's own contract).
+		if r.get("for") == beam_for
+		and (r.get("yarn_count") or "").strip() == (yarn_count or "").strip()
+		and (not finish_item or _row_finish_item(wc, r) == finish_item)
+	]
+
+
+def _get_pending(wc, beam_for, yarn_count, finish_item=None):
+	"""Total LBS of this (finish item, Pile/Ground, yarn) across the contract's BOM Items,
+	how much existing Sizing Programs already issued, and what is left."""
+	total = sum(flt(r.get("yarn_qty")) for r in _matching_bom_rows(wc, beam_for, yarn_count, finish_item))
+	beam_item = _beam_item_code(beam_for, yarn_count)
+	# Old-style programs (single yarn in the header) - they carry no per-row finish item ...
+	issued = 0
+	if not finish_item or finish_item == wc.get("construction"):
+		issued += frappe.db.sql(
+			"""
+			select coalesce(sum(lbs_issue), 0)
+			from `tabSizing Program` sp
+			where weaving_contract = %s and item = %s and item_returnable = %s and docstatus != 2
+			and not exists (select 1 from `tabSizing Program Yarn` y where y.parent = sp.name)
+			""",
+			(wc.name, yarn_count, beam_item),
+		)[0][0]
+	# ... plus programs using the Yarn Details table (row's own contract and finish item).
 	issued += frappe.db.sql(
 		"""
 		select coalesce(sum(y.lbs_issue), 0)
@@ -111,28 +122,31 @@ def _get_pending(wc, beam_for, yarn_count):
 		inner join `tabSizing Program` sp on sp.name = y.parent and y.parenttype = 'Sizing Program'
 		where y.weaving_contract = %s and y.yarn_item = %s
 		and coalesce(nullif(y.beam_item, ''), sp.item_returnable) = %s and sp.docstatus != 2
+		and (%s = '' or coalesce(nullif(y.finish_item, ''), %s) = %s)
 		""",
-		(wc.name, yarn_count, _beam_item_code(beam_for, yarn_count)),
+		(wc.name, yarn_count, beam_item, finish_item or "", wc.get("construction") or "", finish_item or ""),
 	)[0][0]
 	return {"total": total, "issued": flt(issued), "pending": max(0.0, total - flt(issued))}
 
 
 @frappe.whitelist()
 def get_sizing_program_items(weaving_contract):
-	"""Pile/Ground yarns that still need a Sizing Program, for the popup. The
-	same yarn on several BOM rows is listed once with the rows' LBS added
-	together; a yarn drops out once its full LBS has a Sizing Program."""
+	"""Pile/Ground yarns that still need a Sizing Program, for the popup: one line per
+	(Finish Item, Pile/Ground, yarn) - a multi item contract lists every finish item. The same
+	yarn on several BOM rows of one finish item is listed once with the rows' LBS added together;
+	a yarn drops out once its full LBS has a Sizing Program."""
 	wc = frappe.get_doc("Weaving Contract", weaving_contract)
 	seen = []
 	out = []
 	for r in wc.bom_items or []:
-		key = (r.get("for"), (r.get("yarn_count") or "").strip())
-		if r.get("for") not in ("Pile", "Ground") or not key[1] or key in seen:
+		finish = _row_finish_item(wc, r)
+		key = (finish, r.get("for"), (r.get("yarn_count") or "").strip())
+		if r.get("for") not in ("Pile", "Ground") or not key[2] or key in seen:
 			continue
 		seen.append(key)
-		data = _get_pending(wc, *key)
+		data = _get_pending(wc, key[1], key[2], finish)
 		if data["pending"] > 0.001:
-			out.append({"for": key[0], "yarn_count": key[1], **data})
+			out.append({"finish_item": finish, "for": key[1], "yarn_count": key[2], **data})
 	return out
 
 
@@ -182,23 +196,18 @@ def get_yarn_rows_for_contracts(weaving_contracts):
 			frappe.throw(_("Weaving Contract {0} is not submitted.").format(name))
 		for data in get_sizing_program_items(name):
 			yarn = data["yarn_count"]
+			finish = data["finish_item"]
 			beam_item = _beam_item_code(data["for"], yarn)
-			bom_row = next(
-				(
-					r
-					for r in wc.bom_items or []
-					if r.get("for") == data["for"] and (r.get("yarn_count") or "").strip() == yarn
-				),
-				None,
-			)
+			bom_row = next(iter(_matching_bom_rows(wc, data["for"], yarn, finish)), None)
 			out.append(
 				{
 					"weaving_contract": wc.name,
-					"finish_item": wc.get("construction"),
+					"finish_item": finish,
 					"yarn_item": yarn,
 					"beam_item": beam_item if frappe.db.exists("Item", beam_item) else None,
 					"lbs_per_bag": (flt(bom_row.get("lbs_per_bag")) if bom_row else 0) or 100,
 					"lbs_issue": data["pending"],
+					"weaving_contract_lbs": data["total"],
 					"beam_for": data["for"],
 				}
 			)
