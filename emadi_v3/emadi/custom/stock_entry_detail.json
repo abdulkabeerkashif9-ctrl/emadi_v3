@@ -19,7 +19,7 @@
    "dt": "Stock Entry Detail",
    "fetch_from": null,
    "fetch_if_empty": 0,
-   "fieldname": "bags",
+   "fieldname": "custom_bags",
    "fieldtype": "Float",
    "hidden": 0,
    "hide_border": 0,
@@ -41,7 +41,7 @@
    "modified": "2025-02-24 19:26:37.085194",
    "modified_by": "Administrator",
    "module": null,
-   "name": "Stock Entry Detail-bags",
+   "name": "Stock Entry Detail-custom_bags",
    "no_copy": 0,
    "non_negative": 0,
    "options": null,
@@ -93,7 +93,7 @@
    "in_list_view": 0,
    "in_preview": 0,
    "in_standard_filter": 0,
-   "insert_after": "bags",
+   "insert_after": "custom_bags",
    "is_system_generated": 0,
    "is_virtual": 0,
    "label": "Brand",
@@ -804,7 +804,7 @@
    "property": "field_order",
    "property_type": "Data",
    "row_name": null,
-   "value": "[\"barcode\", \"has_item_scanned\", \"section_break_2\", \"s_warehouse\", \"col_break1\", \"t_warehouse\", \"sec_break1\", \"item_code\", \"item_name\", \"col_break2\", \"is_finished_item\", \"is_scrap_item\", \"quality_inspection\", \"subcontracted_item\", \"section_break_8\", \"description\", \"column_break_10\", \"item_group\", \"image\", \"image_view\", \"quantity_section\", \"qty\", \"qty_pcs\", \"transfer_qty\", \"retain_sample\", \"column_break_20\", \"uom\", \"stock_uom\", \"conversion_factor\", \"sample_quantity\", \"rates_section\", \"basic_rate\", \"additional_cost\", \"valuation_rate\", \"allow_zero_valuation_rate\", \"col_break3\", \"set_basic_rate_manually\", \"basic_amount\", \"amount\", \"serial_no_batch\", \"serial_no\", \"col_break4\", \"batch_no\", \"accounting\", \"expense_account\", \"accounting_dimensions_section\", \"master_towel_costing\", \"cost_center\", \"project\", \"dimension_col_break\", \"job_no\", \"fabric_weaving\", \"more_info\", \"actual_qty\", \"transferred_qty\", \"bom_no\", \"allow_alternative_item\", \"col_break6\", \"material_request\", \"material_request_item\", \"original_item\", \"reference_section\", \"against_stock_entry\", \"ste_detail\", \"po_detail\", \"sco_rm_detail\", \"putaway_rule\", \"column_break_51\", \"reference_purchase_receipt\", \"job_card_item\", \"weaving_contract\", \"for\", \"construction\", \"bags\", \"brand\", \"custom_column_break_fcnaf\", \"custom_customer_brand\", \"custom_customer_godown_\"]"
+   "value": "[\"barcode\", \"has_item_scanned\", \"section_break_2\", \"s_warehouse\", \"col_break1\", \"t_warehouse\", \"sec_break1\", \"item_code\", \"item_name\", \"col_break2\", \"is_finished_item\", \"is_scrap_item\", \"quality_inspection\", \"subcontracted_item\", \"section_break_8\", \"description\", \"column_break_10\", \"item_group\", \"image\", \"image_view\", \"quantity_section\", \"qty\", \"qty_pcs\", \"transfer_qty\", \"retain_sample\", \"column_break_20\", \"uom\", \"stock_uom\", \"conversion_factor\", \"sample_quantity\", \"rates_section\", \"basic_rate\", \"additional_cost\", \"valuation_rate\", \"allow_zero_valuation_rate\", \"col_break3\", \"set_basic_rate_manually\", \"basic_amount\", \"amount\", \"serial_no_batch\", \"serial_no\", \"col_break4\", \"batch_no\", \"accounting\", \"expense_account\", \"accounting_dimensions_section\", \"master_towel_costing\", \"cost_center\", \"project\", \"dimension_col_break\", \"job_no\", \"fabric_weaving\", \"more_info\", \"actual_qty\", \"transferred_qty\", \"bom_no\", \"allow_alternative_item\", \"col_break6\", \"material_request\", \"material_request_item\", \"original_item\", \"reference_section\", \"against_stock_entry\", \"ste_detail\", \"po_detail\", \"sco_rm_detail\", \"putaway_rule\", \"column_break_51\", \"reference_purchase_receipt\", \"job_card_item\", \"weaving_contract\", \"for\", \"construction\", \"custom_bags\", \"brand\", \"custom_column_break_fcnaf\", \"custom_customer_brand\", \"custom_customer_godown_\"]"
   }
  ],
  "sync_on_migrate": 1

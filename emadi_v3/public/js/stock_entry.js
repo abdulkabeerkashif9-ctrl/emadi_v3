@@ -19,6 +19,7 @@ function calculate_total_qty(frm) {
 //   typing Bags  ->  Qty  = Bags * 100
 //   typing Qty   ->  Bags = Qty / 100
 // A flag on the row stops the two handlers from re-triggering each other.
+// The field is Stock Entry Detail > custom_bags (the old name `bags` is no longer used anywhere).
 const BAG_SIZE = 100;
 
 function sync_bags_qty(frm, cdt, cdn, from_field) {
