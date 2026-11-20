@@ -131,7 +131,9 @@ doc_events = {
         "on_submit": "emadi_v3.emadiv3.events.create_dn.onsubmit"
     },
     "Stock Entry": {
-        "before_validate": "emadi_v3.emadiv3.events.stock_entry_weaving_contract.before_validate"
+        "before_validate": "emadi_v3.emadiv3.events.stock_entry_weaving_contract.before_validate",
+        "before_submit": "emadi_v3.emadiv3.events.stock_entry_weaving_contract.create_yarn_batches",
+        "on_cancel": "emadi_v3.emadiv3.events.stock_entry_weaving_contract.disable_yarn_batches"
     },
     "Material Request": {
         "validate": "emadi_v3.emadiv3.events.customer_yarn_material_request.validate"

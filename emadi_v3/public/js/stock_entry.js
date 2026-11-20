@@ -39,6 +39,22 @@ function sync_bags_qty(frm, cdt, cdn, from_field) {
 }
 
 frappe.ui.form.on('Stock Entry Detail', {
+    // picking a yarn Batch fills the row's Brand and PaperTip from it
+    batch_no: function(frm, cdt, cdn) {
+        const row = locals[cdt][cdn];
+        if (!row.batch_no || !frappe.meta.has_field("Stock Entry Detail", "custom_paper_tip")) {
+            return;
+        }
+        frappe.db.get_value("Batch", row.batch_no, ["custom_brand", "custom_paper_tip"]).then(function(r) {
+            const v = (r && r.message) || {};
+            if (v.custom_brand) {
+                frappe.model.set_value(cdt, cdn, "brand", v.custom_brand);
+            }
+            if (v.custom_paper_tip) {
+                frappe.model.set_value(cdt, cdn, "custom_paper_tip", v.custom_paper_tip);
+            }
+        });
+    },
     custom_bags: function(frm, cdt, cdn) {
         sync_bags_qty(frm, cdt, cdn, "custom_bags");
     },
