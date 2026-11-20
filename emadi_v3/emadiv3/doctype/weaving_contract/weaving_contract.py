@@ -237,13 +237,14 @@ def sync_yarn_driven_fields(doc):
 				* (1 + flt(row.get("weaving_wastage")) / 100)
 			)
 		if flt(row.lbs_per_bag):
-			row.required_bags = flt(row.yarn_qty) / flt(row.lbs_per_bag)
+			row.required_bags = flt(flt(row.yarn_qty) / flt(row.lbs_per_bag), 6)
 		total_yarn += flt(row.yarn_qty)
 		total_bags += flt(row.required_bags)
 
-	doc.total_yarn = total_yarn
-	doc.total_consumption = total_yarn
-	doc.total_bags = total_bags
+	# rounded so saving again never changes a total by float noise (matters after submit)
+	doc.total_yarn = flt(total_yarn, 6)
+	doc.total_consumption = flt(total_yarn, 6)
+	doc.total_bags = flt(total_bags, 6)
 
 	if not commercial and doc.get("sales_order") and doc.get("construction"):
 		tcs = get_contract_tcs(doc)
