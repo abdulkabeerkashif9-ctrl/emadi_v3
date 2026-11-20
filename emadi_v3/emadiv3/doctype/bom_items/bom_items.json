@@ -16,7 +16,7 @@
   "yarn_qty",
   "uom",
   "lbs_per_bag",
-"yarn_qty",
+  "yarn_qty",
   "required_bags",
   "delivery_sechdule_section",
   "delivery_sechdule",
@@ -46,36 +46,37 @@
    "label": "Yarn Count",
    "options": "Item"
   },
-{
-      "fieldname": "yarn_issued",
-      "fieldtype": "Float",
-      "label": "Yarn Issued (Lbs)",
-      "insert_after": "yarn_qty",
-      "dt": "BOM Items",
-      "read_only": 1,
-      "no_copy": 1,
-      "description": "Internal - Lbs of this row's yarn issued so far via Weaving Contract's \"Issue Yarn\" button. Self-healing (see events/issue_yarn.py's sync_yarn_issued_totals) - recomputed from actually-submitted Stock Entries every time the Weaving Contract form loads, not incrementally accumulated, so it can't drift even if a hooks.py entry is missing. Added 2026-09-16."
-    },
+  {
+   "fieldname": "yarn_issued",
+   "fieldtype": "Float",
+   "label": "Yarn Issued (Lbs)",
+   "insert_after": "yarn_qty",
+   "dt": "BOM Items",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Internal - Lbs of this row's yarn issued so far via Weaving Contract's \"Issue Yarn\" button. Self-healing (see events/issue_yarn.py's sync_yarn_issued_totals) - recomputed from actually-submitted Stock Entries every time the Weaving Contract form loads, not incrementally accumulated, so it can't drift even if a hooks.py entry is missing. Added 2026-09-16."
+  },
   {
    "fieldname": "consumption",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Consumption LBS/Meter",
-   "hidden":1
+   "hidden": 1
   },
   {
    "fieldname": "ratio",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Ratio %",
-   "hidden":0
+   "hidden": 0,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "weaving_wastage",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Weaving Wastage %",
-   "hidden":0
+   "hidden": 0
   },
   {
    "default": "0",
@@ -83,7 +84,8 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Yarn Qty",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   },
   {
    "fetch_from": "yarn_count.stock_uom",

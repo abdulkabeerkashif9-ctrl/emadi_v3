@@ -122,7 +122,16 @@ frappe.ui.form.on('Weaving Contract', {
 			}
 		}
 
-		// Commercial contracts: "Gate Pass" opens a Material Receipt Stock Entry that lists every Yarn Item
+		// After submit, Ratio % / Yarn Qty of the BOM rows can only be changed on Commercial contracts
+		if (frm.doc.docstatus == 1 && frm.fields_dict.bom_items) {
+			const editable = frm.doc.type == "Commercial" ? 1 : 0;
+			["ratio", "yarn_qty"].forEach(function(f) {
+				frm.fields_dict.bom_items.grid.update_docfield_property(f, "read_only", editable ? (f == "yarn_qty" ? 1 : 0) : 1);
+			});
+			frm.refresh_field("bom_items");
+		}
+
+		// Commercial contracts: "Receive Yarn" opens a Material Receipt Stock Entry that lists every Yarn Item
 		// of the contract with its quantity (BOM rows of the same yarn are added together). It disappears
 		// once that Stock Entry has been created.
 		if (frm.doc.docstatus == 1 && frm.doc.type == "Commercial") {
@@ -134,8 +143,8 @@ frappe.ui.form.on('Weaving Contract', {
 				if (res && res.message && res.message.name) {
 					return;
 				}
-				frm.remove_custom_button(__('Gate Pass'));
-				frm.add_custom_button(__('Gate Pass'), function() {
+				frm.remove_custom_button(__('Receive Yarn'));
+				frm.add_custom_button(__('Receive Yarn'), function() {
 					frappe.call({
 						method: "emadi_v3.emadi.events.create_stock_entry_from_weaving_contract.create_stock_entry_from_weaving_contract",
 						args: { weaving_contract: frm.doc.name },

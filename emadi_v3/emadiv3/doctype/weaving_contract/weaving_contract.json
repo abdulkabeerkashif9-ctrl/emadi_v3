@@ -237,7 +237,8 @@
    "fieldname": "bom_items",
    "fieldtype": "Table",
    "label": "BOM Items",
-   "options": "BOM Items"
+   "options": "BOM Items",
+   "allow_on_submit": 1
   },
   {
    "fieldname": "section_break_n01kw",

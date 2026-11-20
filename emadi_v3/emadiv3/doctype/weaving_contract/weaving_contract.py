@@ -34,6 +34,20 @@ class WeavingContract(Document):
 			# Draft save: warn only. Submit: hard stop (fresh DB re-read).
 			validate_contract_yarn_balance(self, hard=self.docstatus == 1)
 
+	def before_update_after_submit(self):
+		"""Ratio % / Yarn Qty of the BOM rows may be changed after submit on Commercial contracts only."""
+		old = {r.name: r for r in (self.get_doc_before_save() or frappe._dict()).get("bom_items") or []}
+		changed = [
+			r for r in self.get("bom_items") or []
+			if r.name in old and (flt(r.ratio) != flt(old[r.name].ratio) or flt(r.yarn_qty) != flt(old[r.name].yarn_qty))
+		]
+		if self.type != "Commercial":
+			if changed:
+				frappe.throw(_("Ratio % and Yarn Qty can be changed after submit only on a Commercial Weaving Contract."))
+			return
+		if changed:
+			sync_yarn_driven_fields(self)
+
 	def on_submit(self):
 		allocate_sales_order_balance(self)
 		create_beam_items(self)
