@@ -2,6 +2,51 @@ import frappe
 
 
 def before_validate(doc, method=None):
+    _from_material_request(doc)
+    set_commercial_customer(doc)
+
+
+def find_weaving_contract(doc):
+    """Weaving Contract an entry belongs to: its own field, a row's, or the one of its Sizing Program / Daily Loom Production."""
+    if doc.get("weaving_contract"):
+        return doc.weaving_contract
+    for row in doc.get("items") or []:
+        if row.get("weaving_contract"):
+            return row.weaving_contract
+    for field in ("sizing_program", "custom_sizing_program_gate_pass", "custom_sizing_program_stock_entry"):
+        sp = doc.get(field)
+        if sp and frappe.db.exists("Sizing Program", sp):
+            wc = frappe.db.get_value("Sizing Program", sp, "weaving_contract") or frappe.db.get_value(
+                "Sizing Program Yarn", {"parent": sp, "weaving_contract": ["!=", ""]}, "weaving_contract"
+            )
+            if wc:
+                return wc
+    dlp = doc.get("custom_daily_towel_production")
+    if dlp and frappe.db.exists("Daily Loom Production", dlp):
+        return frappe.db.get_value(
+            "Daily Loom Production Item", {"parent": dlp, "weaving_contract": ["!=", ""]}, "weaving_contract"
+        )
+    return None
+
+
+def set_commercial_customer(doc):
+    """Every Stock Entry of a Commercial Weaving Contract carries that contract's Customer."""
+    if not frappe.get_meta("Stock Entry").has_field("custom_customer"):
+        return
+    contract = find_weaving_contract(doc)
+    if not contract:
+        return
+    wc = frappe.db.get_value("Weaving Contract", contract, ["type", "customer"], as_dict=True)
+    if not wc or wc.type != "Commercial":
+        return
+    if not wc.customer:
+        frappe.throw(
+            frappe._("Set Customer on Weaving Contract {0}: Commercial contracts must carry a customer on every Stock Entry.").format(contract)
+        )
+    doc.custom_customer = wc.customer
+
+
+def _from_material_request(doc):
     """Stock Entry made from a Material Request (e.g. Material Receipt) keeps the
     Weaving Contract of that Material Request, on the header and on each row."""
     mr_names = {row.material_request for row in doc.get("items") or [] if row.get("material_request")}
