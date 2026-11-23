@@ -24,6 +24,11 @@ from frappe.utils import flt
 TOLERANCE = 0.001
 
 
+def basis_qty(row):
+	"""Quantity every planning calculation runs on: AB Qty of the Sales Order Item, else its ordinary Qty."""
+	return flt(row.get("custom_ab_qty")) or flt(row.get("qty"))
+
+
 def _key(item_code, for_, yarn):
 	return (item_code or "", (for_ or "").strip(), yarn or "")
 
@@ -54,13 +59,13 @@ def get_yarn_required(sales_order, item_code=None):
 	rows = frappe.get_all(
 		"Sales Order Item",
 		filters=filters,
-		fields=["item_code", "qty", "custom_towel_costing_sheet"],
+		fields=["item_code", "qty", "custom_ab_qty", "custom_towel_costing_sheet"],
 		order_by="idx asc",
 	)
 	required = {}
 	for row in rows:
 		for k, line in get_tcs_lines(row.custom_towel_costing_sheet, row.item_code).items():
-			required[k] = required.get(k, 0) + flt(row.qty) * line["per_pc"]
+			required[k] = required.get(k, 0) + basis_qty(row) * line["per_pc"]
 	return required
 
 

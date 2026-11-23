@@ -3,6 +3,7 @@ from frappe import _
 from frappe.utils import flt
 
 from emadi_v3.emadi.events.weaving_yarn_balance import (
+	basis_qty,
 	get_per_piece_total,
 	get_tcs_lines,
 	get_yarn_balances,
@@ -29,7 +30,7 @@ def get_sales_order_items(sales_order):
 	so_items = frappe.get_all(
 		"Sales Order Item",
 		filters={"parent": sales_order},
-		fields=["item_code", "item_name", "qty", "custom_weave_qty"],
+		fields=["item_code", "item_name", "qty", "custom_ab_qty", "custom_weave_qty"],
 		order_by="idx asc",
 	)
 
@@ -39,7 +40,7 @@ def get_sales_order_items(sales_order):
 			d.item_code,
 			{"item_code": d.item_code, "item_name": d.item_name, "balance_qty": 0.0, "yarn_balance_lbs": 0.0},
 		)
-		g["balance_qty"] += flt(d.qty) - flt(d.custom_weave_qty)
+		g["balance_qty"] += basis_qty(d) - flt(d.custom_weave_qty)
 
 	balances = get_yarn_balances(sales_order)
 	has_yarn_lines = set()
@@ -105,7 +106,7 @@ def _get_weaving_data_from_sales_order(sales_order, item_code):
 	so_items = frappe.get_all(
 		"Sales Order Item",
 		filters={"parent": sales_order, "item_code": item_code},
-		fields=["name", "qty", "custom_weave_qty", "custom_towel_costing_sheet"],
+		fields=["name", "qty", "custom_ab_qty", "custom_weave_qty", "custom_towel_costing_sheet"],
 		order_by="idx asc",
 	)
 	if not so_items:
@@ -117,7 +118,7 @@ def _get_weaving_data_from_sales_order(sales_order, item_code):
 	representative = next((d for d in so_items if d.custom_towel_costing_sheet), so_items[0])
 	towel_costing_sheet = representative.custom_towel_costing_sheet
 
-	piece_balance = sum(flt(d.qty) - flt(d.custom_weave_qty) for d in so_items)
+	piece_balance = sum(basis_qty(d) - flt(d.custom_weave_qty) for d in so_items)
 
 	bom_items = []
 	weaving_wastage = 0

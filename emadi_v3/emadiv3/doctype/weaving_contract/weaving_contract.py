@@ -9,6 +9,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, flt
 
 from emadi_v3.emadi.events.weaving_yarn_balance import (
+	basis_qty,
 	get_contract_tcs,
 	get_tcs_lines,
 	validate_contract_yarn_balance,
@@ -292,7 +293,7 @@ def allocate_sales_order_balance(doc):
 		rows = frappe.get_all(
 			"Sales Order Item",
 			filters={"parent": doc.sales_order, "item_code": item_code},
-			fields=["name", "qty", "custom_weave_qty"],
+			fields=["name", "qty", "custom_ab_qty", "custom_weave_qty"],
 			order_by="idx asc",
 		)
 
@@ -301,7 +302,7 @@ def allocate_sales_order_balance(doc):
 		for row in rows:
 			if remaining <= 0:
 				break
-			available = flt(row.qty) - flt(row.custom_weave_qty)
+			available = basis_qty(row) - flt(row.custom_weave_qty)
 			if available <= 0:
 				continue
 			take = min(available, remaining)
