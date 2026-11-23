@@ -1,5 +1,8 @@
 import json
+import logging
 import os
+import sqlite3
+import traceback
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -7,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -31,6 +34,14 @@ async def lifespan(app):
 app = FastAPI(title="ERP Fleet Manager", lifespan=lifespan)
 app.include_router(api_extra.router)
 app.include_router(api_reliability.router)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    """Unexpected server errors: the traceback goes to the console and the real cause to the browser,
+    instead of a bare "Request failed (500)"."""
+    logging.getLogger("fleetmanager").error("%s %s failed:\n%s", request.method, request.url.path, traceback.format_exc())
+    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 
 
 # ------------------------------------------------------------------ auth
@@ -276,7 +287,16 @@ def _check_git_url(u):
 
 @app.get("/api/apps")
 def apps_list(_=Depends(user)):
-    return db.q("SELECT a.*, (SELECT COUNT(*) FROM server_apps sa WHERE sa.app_name=a.name) AS servers FROM apps a ORDER BY builtin DESC, name")
+    sql = "SELECT a.*, (SELECT COUNT(*) FROM server_apps sa WHERE sa.app_name=a.name) AS servers FROM apps a ORDER BY builtin DESC, name"
+    try:
+        return db.q(sql)
+    except sqlite3.Error:
+        # an older database file missing a table / column: bring the schema up to date once and retry
+        db.init()
+        try:
+            return db.q(sql)
+        except sqlite3.Error:
+            return [dict(r, servers=0) for r in db.q("SELECT * FROM apps ORDER BY name")]
 
 
 @app.post("/api/apps")
