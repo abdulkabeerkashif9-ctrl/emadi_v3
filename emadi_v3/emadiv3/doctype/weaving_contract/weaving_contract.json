@@ -59,7 +59,10 @@
   "description",
   "greige_request_no",
   "erp_doc",
-  "mat_id"
+  "mat_id",
+  "terms_section",
+  "tc_name",
+  "terms"
  ],
  "fields": [
   {
@@ -393,6 +396,25 @@
    "fieldtype": "Data",
    "hidden": 1,
    "label": "Mat ID"
+  },
+  {
+   "fieldname": "terms_section",
+   "fieldtype": "Section Break",
+   "label": "Terms and Conditions",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "tc_name",
+   "fieldtype": "Link",
+   "options": "Terms and Conditions",
+   "label": "Terms and Conditions Template",
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "terms",
+   "fieldtype": "Text Editor",
+   "label": "Terms and Conditions",
+   "allow_on_submit": 1
   }
  ],
  "index_web_pages_for_search": 1,

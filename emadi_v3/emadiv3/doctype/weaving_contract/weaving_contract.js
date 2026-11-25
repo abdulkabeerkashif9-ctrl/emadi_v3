@@ -2,6 +2,21 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on('Weaving Contract', {
+	// picking a Terms and Conditions template fills the Terms text (the template is rendered with this contract)
+	tc_name: function(frm) {
+		if (!frm.doc.tc_name) {
+			return;
+		}
+		frappe.call({
+			method: "erpnext.setup.doctype.terms_and_conditions.terms_and_conditions.get_terms_and_conditions",
+			args: { template_name: frm.doc.tc_name, doc: frm.doc },
+			callback: function(r) {
+				if (!r.exc) {
+					frm.set_value("terms", r.message || "");
+				}
+			}
+		});
+	},
 	refresh: function(frm) {
 		toggle_multi_item(frm);
 
