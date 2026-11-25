@@ -132,7 +132,8 @@ def _get_weaving_data_from_sales_order(sales_order, item_code):
 			if finish_row.article == item_code:
 				weaving_wastage = flt(finish_row.weaving_wastage_percet)
 				finish_weight = flt(finish_row.finish_weight)
-				gross_weight = flt(finish_row.greige_weight)
+				# greige weight of the contract = finish weight + dyeing wastage % (weaving wastage is added later, on the yarn rows)
+				gross_weight = finish_weight * (1 + flt(finish_row.dyeing_wastage_percent) / 100)
 				break
 
 		balances = get_yarn_balances(sales_order, item_code)
